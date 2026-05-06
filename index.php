@@ -4,6 +4,14 @@
  * Original: Nextron/Electron + React/TypeScript + Python proxy.
  * Converted to: PHP + HTML + CSS + JavaScript.
  */
+if (
+    empty($_SERVER['HTTPS']) || $_SERVER['HTTPS'] === 'off'
+) {
+    $httpsUrl = 'https://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
+    header('Location: ' . $httpsUrl, true, 302);
+    exit;
+}
+
 $page = $_GET['page'] ?? 'home';
 $allowedPages = ['home','login','register','login-child','child-dashboard','child-logs','dashboard','children','log-activity','rules','access-requests','schedule','report','streak-calendar','setting','about','blocked'];
 if (!in_array($page, $allowedPages, true)) {

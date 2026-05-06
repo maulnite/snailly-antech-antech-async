@@ -9,10 +9,10 @@ function snailly_start_session(): void
     if (session_status() === PHP_SESSION_ACTIVE) return;
     session_name('SNAILLYSESSID');
     session_set_cookie_params([
-        'lifetime' => 0,
+        'lifetime' => 3600,
         'path' => '/',
         'domain' => '',
-        'secure' => false,       // local XAMPP/LAN uses HTTP; switch to true when using HTTPS.
+        'secure' => true,       // local XAMPP/LAN uses HTTP; switch to true when using HTTPS.
         'httponly' => true,
         'samesite' => 'Lax',
     ]);
