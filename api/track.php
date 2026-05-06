@@ -4,6 +4,7 @@ declare(strict_types=1);
 date_default_timezone_set('Asia/Jakarta');
 require_once __DIR__ . '/../lib/Security.php';
 require_once __DIR__ . '/../lib/Database.php';
+require_once __DIR__ . '/../lib/PolicyEngine.php';
 header('Content-Type: application/json; charset=utf-8');
 snailly_apply_cors();
 
@@ -37,20 +38,40 @@ try {
         // Duplicate logs are not saved again, but the policy is still rechecked.
         // This fixes cases where parent just deleted/changed a rule while the same tab is still open.
         $classification = classifyUrl($db, $userId, (string)$child['id'], $url);
+
+        $action = $classification['action'];
+        $blocked = $action === 'block';
+
+        $duplicate['grant_access'] = !$blocked;
+        $duplicate['classified_url'] = [[
+            'FINAL_label' => $classification['label'],
+            'action' => $action,
+            'category' => $classification['category'],
+            'risk' => $classification['risk'],
+            'reason' => $classification['reason'],
+            'score' => $classification['score'],
+        ]];
+
         respondAndUnlock($fp, [
             'ok' => true,
             'message' => 'Duplicate URL policy rechecked.',
             'duplicate' => true,
             'data' => $duplicate,
-            'blocked' => $classification['label'] !== 'aman',
+            'blocked' => $blocked,
+            'grant_access' => !$blocked,
             'label' => $classification['label'],
+            'action' => $action,
             'category' => $classification['category'],
             'risk' => $classification['risk'],
             'reason' => $classification['reason'],
+            'score' => $classification['score'],
         ]);
     }
 
     $classification = classifyUrl($db, $userId, (string)$child['id'], $url);
+
+    $action = $classification['action'];
+    $blocked = $action === 'block';
     $log = [
         'log_id' => id('log'),
         'child_id' => (string)$child['id'],
@@ -59,9 +80,10 @@ try {
         'web_title' => $title !== '' ? substr($title, 0, 180) : hostOf($url),
         'web_description' => 'Captured by Snailly browser extension (' . $source . ').',
         'detail_url' => $url,
-        'grant_access' => $classification['label'] === 'aman',
+        'grant_access' => !$blocked,
         'classified_url' => [[
             'FINAL_label' => $classification['label'],
+            'action' => $action,
             'category' => $classification['category'],
             'risk' => $classification['risk'],
             'reason' => $classification['reason'],
@@ -74,15 +96,19 @@ try {
     $db['logs'][] = $log;
     saveDbLocked($dbStore, $db, $fp);
 
+
     respond([
         'ok' => true,
         'message' => 'URL tracked successfully.',
         'data' => $log,
-        'blocked' => $classification['label'] !== 'aman',
+        'blocked' => $blocked,
+        'grant_access' => !$blocked,
         'label' => $classification['label'],
+        'action' => $action,
         'category' => $classification['category'],
         'risk' => $classification['risk'],
         'reason' => $classification['reason'],
+        'score' => $classification['score'],
     ], 201);
 } catch (Throwable $e) {
     // MySQL storage does not need manual file unlock.
@@ -113,44 +139,35 @@ function hostOf(string $url): string { return strtolower((string)(parse_url($url
 function id(string $prefix): string { return $prefix . '_' . bin2hex(random_bytes(6)); }
 function classificationOf(array $log): array { $labels=$log['classified_url'] ?? []; return is_array($labels) && isset($labels[0]) && is_array($labels[0]) ? $labels[0] : []; }
 function isDangerLog(array $log): bool { if(($log['grant_access'] ?? null) === true) return false; if(($log['grant_access'] ?? null) === false) return true; return (string)(classificationOf($log)['FINAL_label'] ?? 'aman') !== 'aman'; }
-
-function classifyUrl(array $db, string $parentId, string $childId, string $url): array
+function normalizeClassificationResult(array $classification): array
 {
-    $schedule = scheduleDecision($db, $parentId, $childId);
-    if ($schedule !== null) return $schedule;
+    $label = (string)($classification['label'] ?? 'aman');
+    $action = (string)($classification['action'] ?? '');
 
-    // Latest matching parent rule wins. Old logs are history and must not act as live blocking rules.
-    $rule = latestRuleDecision($db, $parentId, $childId, $url);
-    if ($rule !== null) return $rule;
-
-    $lower = strtolower($url);
-    $host = hostOf($url);
-    $checks = [
-        'Adult Content' => ['risk'=>'High','words'=>['porn','porno','sex','xxx','xvideos','xnxx','bokep','adult','nsfw','hentai']],
-        'Gambling' => ['risk'=>'High','words'=>['judi','casino','togel','slot','betting','gambling','gacor']],
-        'Phishing' => ['risk'=>'High','words'=>['phishing','verify-account','account-verify','free-login','password-reset','claim-gift','wallet-verify']],
-        'Malware/Piracy' => ['risk'=>'High','words'=>['malware','trojan','virus','crack','keygen','darkweb','download-cheat']],
-        'Suspicious' => ['risk'=>'Medium','words'=>['free-robux','free-gift','giveaway-login','bonus-claim']],
-    ];
-    foreach ($checks as $category => $info) {
-        foreach ($info['words'] as $word) {
-            if (str_contains($lower, $word)) {
-                return ['label'=>'bahaya','category'=>$category,'risk'=>$info['risk'],'score'=>$info['risk']==='High'?90:60,'reason'=>'Keyword detected: '.$word];
-            }
+    if (!in_array($action, ['allow', 'warn', 'block'], true)) {
+        if ($label === 'bahaya') {
+            $action = 'block';
+        } elseif ($label === 'peringatan') {
+            $action = 'warn';
+        } else {
+            $action = 'allow';
         }
     }
-    if (preg_match('/\d+\.\d+\.\d+\.\d+/', $host)) return ['label'=>'bahaya','category'=>'Suspicious','risk'=>'Medium','score'=>60,'reason'=>'Website uses raw IP address.'];
-    if (strlen($url) > 150 && preg_match('/(login|verify|password|claim)/i', $url)) return ['label'=>'bahaya','category'=>'Suspicious','risk'=>'Medium','score'=>55,'reason'=>'Long URL with login/verify wording.'];
 
-    $education = ['scratch.mit.edu','wikipedia.org','khanacademy.org','code.org','duolingo.com','kids.nationalgeographic.com'];
-    foreach ($education as $domain) {
-        if ($host === $domain || str_ends_with($host, '.'.$domain)) return ['label'=>'aman','category'=>'Education','risk'=>'Low','score'=>5,'reason'=>'Known educational website.'];
-    }
-    $social = ['youtube.com','chatgpt.com','google.com','kaggle.com'];
-    foreach ($social as $domain) {
-        if ($host === $domain || str_ends_with($host, '.'.$domain)) return ['label'=>'aman','category'=>'General/Entertainment','risk'=>'Low','score'=>15,'reason'=>'No risky rule matched.'];
-    }
-    return ['label'=>'aman','category'=>'Safe','risk'=>'Low','score'=>10,'reason'=>'No risky rule matched.'];
+    return [
+        'label' => $label,
+        'action' => $action,
+        'category' => (string)($classification['category'] ?? 'Safe'),
+        'risk' => (string)($classification['risk'] ?? 'Low'),
+        'score' => (int)($classification['score'] ?? 0),
+        'reason' => (string)($classification['reason'] ?? 'No risky rule matched.'),
+    ];
+}
+function classifyUrl(array $db, string $parentId, string $childId, string $url): array
+{
+    return normalizeClassificationResult(
+        SnaillyPolicyEngine::classify($db, $parentId, $childId, $url, true)
+    );
 }
 
 function manualAccessDecision(array $db, string $parentId, string $childId, string $url): ?array

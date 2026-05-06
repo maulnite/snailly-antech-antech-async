@@ -744,13 +744,27 @@
   function statusOf(item) {
     const labels = Array.isArray(item.classified_url) ? item.classified_url : [];
     const label = labels[0]?.FINAL_label;
+    const action = labels[0]?.action;
+
+    if (label === 'peringatan' || action === 'warn') {
+      return ['Warning', 'warning'];
+    }
+
     if (labels.length > 0) {
-      if (label !== 'aman' && label !== 'bahaya' && item.grant_access === null) return ['Not Labelling', 'pending'];
-      if (label === 'aman' && item.grant_access !== false) return ['Positive', 'positive'];
+      if (label !== 'aman' && label !== 'bahaya' && item.grant_access === null) {
+        return ['Not Labelling', 'pending'];
+      }
+
+      if (label === 'aman' && item.grant_access !== false) {
+        return ['Positive', 'positive'];
+      }
+
       return ['Negative', 'negative'];
     }
+
     if (item.grant_access === true) return ['Positive', 'positive'];
     if (item.grant_access === false) return ['Negative', 'negative'];
+
     return ['Not Labelling', 'pending'];
   }
 
@@ -1297,8 +1311,9 @@
         <h2>Add Parent Rule</h2>
         <label>Rule Type
           <select name="type" required>
-            <option value="block">Blocklist / Dangerous</option>
-            <option value="allow">Whitelist / Always Allowed</option>
+            <option value="block">Block / Dangerous</option>
+            <option value="warn">Warn Only</option>
+            <option value="allow">Allow / Whitelist</option>
           </select>
         </label>
         <label>Apply To
@@ -1306,12 +1321,18 @@
         </label>
         <label>Match Type
           <select name="matchType">
-            <option value="domain">Domain / URL</option>
-            <option value="keyword">Keyword</option>
+            <option value="domain">Domain + Subdomain</option>
+            <option value="url">URL / Path Contains</option>
+            <option value="keyword">Keyword Contains</option>
+            <option value="category">Category</option>
           </select>
         </label>
         <label>Domain or Keyword
-          <input name="pattern" placeholder="contoh: youtube.com / slot / scratch.mit.edu" required>
+          <input 
+            name="pattern" 
+            placeholder="contoh: youtube.com / youtube.com/shorts / slot / Gambling" 
+            required
+          >
         </label>
         <label>Category
           <input name="category" placeholder="contoh: Games, Social Media, Gambling, Education">

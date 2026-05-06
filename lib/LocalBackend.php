@@ -6,8 +6,8 @@
 declare(strict_types=1);
 
 date_default_timezone_set('Asia/Jakarta');
-
 require_once __DIR__ . '/Database.php';
+require_once __DIR__ . '/PolicyEngine.php';
 
 final class LocalBackend
 {
@@ -338,15 +338,46 @@ final class LocalBackend
 
     private function createRule(array $user, array $body): array
     {
-        $pattern = $this->normalizePattern((string)($body['pattern'] ?? ''));
         $type = strtolower(trim((string)($body['type'] ?? 'block')));
         $matchType = strtolower(trim((string)($body['matchType'] ?? 'domain')));
         $childId = (string)($body['childId'] ?? 'ALL');
-        $category = trim((string)($body['category'] ?? ($type === 'allow' ? 'Whitelist' : 'Blocked by Parent')));
-        if ($pattern === '') return $this->json(['ok' => false, 'message' => 'Pattern/domain wajib diisi.'], 422);
-        if (!in_array($type, ['allow','block'], true)) return $this->json(['ok' => false, 'message' => 'Rule type tidak valid.'], 422);
-        if (!in_array($matchType, ['domain','keyword'], true)) return $this->json(['ok' => false, 'message' => 'Match type tidak valid.'], 422);
-        if ($childId !== 'ALL' && $this->findChildIndex($user['id'], $childId) === null) return $this->json(['ok' => false, 'message' => 'Child tidak ditemukan.'], 404);
+
+        if (!in_array($type, ['allow', 'block', 'warn'], true)) {
+            return $this->json([
+                'ok' => false,
+                'message' => 'Rule type tidak valid.'
+            ], 422);
+        }
+
+        if (!in_array($matchType, ['domain', 'url', 'keyword', 'category'], true)) {
+            return $this->json([
+                'ok' => false,
+                'message' => 'Match type tidak valid.'
+            ], 422);
+        }
+
+        $pattern = $this->normalizeRulePattern((string)($body['pattern'] ?? ''), $matchType);
+
+        if ($pattern === '') {
+            return $this->json([
+                'ok' => false,
+                'message' => 'Pattern/domain wajib diisi.'
+            ], 422);
+        }
+
+        if ($childId !== 'ALL' && $this->findChildIndex($user['id'], $childId) === null) {
+            return $this->json([
+                'ok' => false,
+                'message' => 'Child tidak ditemukan.'
+            ], 404);
+        }
+
+        $defaultCategory = $type === 'allow'
+            ? 'Allowed by Parent'
+            : ($type === 'warn' ? 'Warning by Parent' : 'Blocked by Parent');
+
+        $category = trim((string)($body['category'] ?? $defaultCategory));
+
         $rule = [
             'id' => $this->id('rul'),
             'parentId' => $user['id'],
@@ -354,14 +385,19 @@ final class LocalBackend
             'type' => $type,
             'matchType' => $matchType,
             'pattern' => $pattern,
-            'category' => $category ?: ($type === 'allow' ? 'Whitelist' : 'Blocked by Parent'),
+            'category' => $category ?: $defaultCategory,
             'createdAt' => $this->now(),
             'updatedAt' => $this->now(),
         ];
+
         $this->addPolicyRule($rule);
         $this->reclassifyLogsForRule($user['id'], $rule['childId'], $rule['pattern'], $rule['matchType']);
         $this->save();
-        return $this->json(['message' => 'Rule saved.', 'data' => $rule], 201);
+
+        return $this->json([
+            'message' => 'Rule saved.',
+            'data' => $rule
+        ], 201);
     }
 
     private function deleteRule(array $user, string $ruleId): array
@@ -388,12 +424,27 @@ final class LocalBackend
     private function updateSchedule(array $user, string $childId, array $body): array
     {
         $idx = $this->findChildIndex($user['id'], $childId);
-        if ($idx === null) return $this->json(['ok' => false, 'message' => 'Child not found.'], 404);
+
+        if ($idx === null) {
+            return $this->json([
+                'ok' => false,
+                'message' => 'Child not found.'
+            ], 404);
+        }
+
         $schedule = $this->sanitizeSchedule($body);
+
         $this->db['children'][$idx]['schedule'] = $schedule;
         $this->db['children'][$idx]['updatedAt'] = $this->now();
+
+        $this->reclassifyLogsForChild((string)$user['id'], (string)$childId);
+
         $this->save();
-        return $this->json(['message' => 'Internet schedule saved.', 'data' => $schedule]);
+
+        return $this->json([
+            'message' => 'Internet schedule saved.',
+            'data' => $schedule
+        ]);
     }
 
     private function listSchedules(array $user): array
@@ -799,12 +850,29 @@ final class LocalBackend
     private function applyLogStatusFilter(array $logs, string $status): array
     {
         $status = strtolower($status);
-        if (!in_array($status, ['positive','negative','pending'], true)) return $logs;
+
+        if (!in_array($status, ['positive', 'negative', 'warning', 'pending'], true)) {
+            return $logs;
+        }
+
         return array_values(array_filter($logs, function ($log) use ($status) {
+            $label = (string)($this->classificationOf($log)['FINAL_label'] ?? '');
+            $action = (string)($this->classificationOf($log)['action'] ?? '');
             $safe = $this->isSafe($log);
             $hasGrant = array_key_exists('grant_access', $log) && is_bool($log['grant_access']);
-            if ($status === 'positive') return $safe;
-            if ($status === 'negative') return !$safe;
+
+            if ($status === 'positive') {
+                return $safe && $label !== 'peringatan' && $action !== 'warn';
+            }
+
+            if ($status === 'negative') {
+                return !$safe;
+            }
+
+            if ($status === 'warning') {
+                return $label === 'peringatan' || $action === 'warn';
+            }
+
             return !$hasGrant;
         }));
     }
@@ -861,8 +929,12 @@ final class LocalBackend
     {
         if (($log['grant_access'] ?? null) === true) return true;
         if (($log['grant_access'] ?? null) === false) return false;
-        $label = (string)($this->classificationOf($log)['FINAL_label'] ?? 'aman');
-        return $label === 'aman';
+
+        $classification = $this->classificationOf($log);
+        $label = (string)($classification['FINAL_label'] ?? 'aman');
+        $action = (string)($classification['action'] ?? '');
+
+        return $label === 'aman' || $label === 'peringatan' || $action === 'warn';
     }
 
     private function isDanger(array $log): bool { return !$this->isSafe($log); }
@@ -870,16 +942,16 @@ final class LocalBackend
 
     private function addPolicyRule(array $newRule): void
     {
-        $pattern = $this->normalizePattern((string)($newRule['pattern'] ?? ''));
-        $childId = (string)($newRule['childId'] ?? 'ALL');
         $matchType = (string)($newRule['matchType'] ?? 'domain');
+        $pattern = $this->normalizeRulePattern((string)($newRule['pattern'] ?? ''), $matchType);
+        $childId = (string)($newRule['childId'] ?? 'ALL');
         $parentId = (string)($newRule['parentId'] ?? '');
         $this->db['rules'] = array_values(array_filter($this->db['rules'], function ($rule) use ($parentId, $childId, $matchType, $pattern) {
             return !(
                 (string)($rule['parentId'] ?? '') === $parentId &&
                 (string)($rule['childId'] ?? 'ALL') === $childId &&
                 (string)($rule['matchType'] ?? 'domain') === $matchType &&
-                $this->normalizePattern((string)($rule['pattern'] ?? '')) === $pattern
+                $this->normalizeRulePattern((string)($rule['pattern'] ?? ''), $matchType) === $pattern
             );
         }));
         $newRule['pattern'] = $pattern;
@@ -891,19 +963,50 @@ final class LocalBackend
     private function reclassifyLogsForRule(string $parentId, string $ruleChildId, string $pattern, string $matchType): void
     {
         foreach ($this->db['logs'] as $i => $log) {
-            if ((string)($log['parentId'] ?? '') !== $parentId) continue;
+            if ((string)($log['parentId'] ?? '') !== $parentId) {
+                continue;
+            }
+
             $logChildId = (string)($log['child_id'] ?? '');
-            if ($ruleChildId !== 'ALL' && $ruleChildId !== '' && $logChildId !== $ruleChildId) continue;
+
+            if ($ruleChildId !== 'ALL' && $ruleChildId !== '' && $logChildId !== $ruleChildId) {
+                continue;
+            }
+
             $url = (string)($log['url'] ?? '');
-            if ($url === '' || !$this->patternMatches($url, $pattern, $matchType)) continue;
-            $classification = $this->classifyHistoricalUrl($parentId, $logChildId, $url);
-            $this->db['logs'][$i]['grant_access'] = $classification['label'] === 'aman';
+
+            if ($url === '') {
+                continue;
+            }
+
+            $base = SnaillyPolicyEngine::heuristicDecision($url);
+
+            if (!SnaillyPolicyEngine::patternMatches($url, $pattern, $matchType, $base['category'] ?? '')) {
+                continue;
+            }
+
+            $classification = SnaillyPolicyEngine::classify(
+                $this->db,
+                $parentId,
+                $logChildId,
+                $url,
+                false
+            );
+
+            $action = $classification['action'] ?? (
+                ($classification['label'] ?? 'aman') === 'bahaya' ? 'block' : 'allow'
+            );
+
+            $blocked = $action === 'block';
+
+            $this->db['logs'][$i]['grant_access'] = !$blocked;
             $this->db['logs'][$i]['classified_url'] = [[
-                'FINAL_label' => $classification['label'],
-                'category' => $classification['category'],
-                'risk' => $classification['risk'],
-                'reason' => $classification['reason'],
-                'score' => $classification['score'],
+                'FINAL_label' => $classification['label'] ?? 'aman',
+                'action' => $action,
+                'category' => $classification['category'] ?? 'Safe',
+                'risk' => $classification['risk'] ?? 'Low',
+                'reason' => $classification['reason'] ?? '',
+                'score' => $classification['score'] ?? 0,
             ]];
             $this->db['logs'][$i]['updatedAt'] = $this->now();
         }
@@ -911,9 +1014,13 @@ final class LocalBackend
 
     private function classifyHistoricalUrl(string $parentId, string $childId, string $url): array
     {
-        $rule = $this->latestRuleDecision($parentId, $childId, $url);
-        if ($rule !== null) return $rule;
-        return $this->heuristicDecision($url);
+        return SnaillyPolicyEngine::classify(
+            $this->db,
+            $parentId,
+            $childId,
+            $url,
+            false
+        );
     }
 
     private function latestRuleDecision(string $parentId, string $childId, string $url): ?array
@@ -960,13 +1067,31 @@ final class LocalBackend
 
     private function patternMatches(string $url, string $pattern, string $matchType): bool
     {
-        $pattern = $this->normalizePattern($pattern);
-        if ($pattern === '') return false;
-        $target = strtolower($url);
+        $matchType = strtolower(trim($matchType ?: 'domain'));
+        $pattern = $this->normalizeRulePattern($pattern, $matchType);
+
+        if ($pattern === '') {
+            return false;
+        }
+
+        $fullUrl = $this->normalizeRulePattern($url, 'url');
         $host = $this->hostOf($url);
-        if ($matchType === 'keyword') return str_contains($target, $pattern);
-        if ($host === $pattern || str_ends_with($host, '.'.$pattern)) return true;
-        return str_contains($this->normalizePattern($url), $pattern);
+
+        if ($matchType === 'keyword') {
+            return str_contains($fullUrl, $pattern);
+        }
+
+        if ($matchType === 'url') {
+            return str_contains($fullUrl, $pattern);
+        }
+
+        if ($matchType === 'category') {
+            $base = $this->heuristicDecision($url);
+            $category = strtolower((string)($base['category'] ?? ''));
+            return $category === $pattern || str_contains($category, $pattern);
+        }
+
+        return $host === $pattern || str_ends_with($host, '.' . $pattern);
     }
 
     private function defaultSchedule(): array
@@ -1051,6 +1176,19 @@ final class LocalBackend
         $pattern = strtolower(trim($pattern));
         $pattern = preg_replace('#^https?://#', '', $pattern) ?? $pattern;
         $pattern = preg_replace('#^www\.#', '', $pattern) ?? $pattern;
+        return trim($pattern, "/ \t\n\r\0\x0B");
+    }
+    private function normalizeRulePattern(string $pattern, string $matchType): string
+    {
+        $pattern = strtolower(trim($pattern));
+        $pattern = preg_replace('#^https?://#', '', $pattern) ?? $pattern;
+        $pattern = preg_replace('#^www\.#', '', $pattern) ?? $pattern;
+
+        if ($matchType === 'domain') {
+            $pattern = explode('/', $pattern)[0] ?? $pattern;
+            return trim($pattern, "/ \t\n\r\0\x0B");
+        }
+
         return trim($pattern, "/ \t\n\r\0\x0B");
     }
     private function hostOf(string $url): string

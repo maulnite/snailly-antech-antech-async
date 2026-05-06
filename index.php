@@ -195,6 +195,7 @@ $config = [
                             <option value="all">All Status</option>
                             <option value="positive">Positive Only</option>
                             <option value="negative">Negative Only</option>
+                            <option value="warning">Warning Only</option>
                             <option value="pending">Not Labelled Only</option>
                         </select>
                         <select id="logPeriod" class="input-compact">
