@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Snailly URL Tracker",
+  "version": "2.1.0",
+  "description": "Tracks visited URLs from Chrome/Edge and sends them to the local Snailly PHP dashboard.",
+  "permissions": [
+    "tabs",
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Snailly Tracker"
+  },
+  "icons": {
+    "128": "icon.png"
+  }
+}
