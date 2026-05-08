@@ -237,10 +237,10 @@ $config = [
                         <p class="muted">Approve atau deny request anak saat website diblokir.</p>
                     </div>
                     <select id="requestStatusFilter" class="input-compact">
+                        <option value="all" selected>All</option>
                         <option value="pending">Pending</option>
                         <option value="approved">Approved</option>
                         <option value="denied">Denied</option>
-                        <option value="all">All</option>
                     </select>
                 </div>
                 <div id="requestsContent"></div>

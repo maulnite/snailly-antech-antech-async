@@ -1339,7 +1339,7 @@
   async function loadRequests() {
     if (!requireUser()) return;
     const root = document.getElementById('requestsContent');
-    const status = document.getElementById('requestStatusFilter')?.value || 'pending';
+    const status = document.getElementById('requestStatusFilter')?.value || 'all';
     root.innerHTML = `<div class="loading">Loading requests...</div>`;
     try {
       const response = await api('/access-requests', { auth: true, params: { status } });
