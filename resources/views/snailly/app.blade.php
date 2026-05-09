@@ -304,7 +304,6 @@
                     <img class="logo big-logo" src="{{ asset('assets/img/logo.png') }}" alt="Snailly logo">
                     <p><strong>Snailly: Safe browsing for the children</strong><br>version 1.0 local-backend &copy;<br>Local PHP backend version.</p>
                     <p>Snailly is an application for parents to control and supervise their children's activities on the internet, where children can explore the internet safely and parents will not worry about the dangers of the internet.</p>
-                    <p class="notice"><strong>Catatan konversi:</strong> backend utama berjalan lokal memakai PHP + JSON storage. Untuk real URL tracking, versi ini menambahkan Chrome/Edge extension di folder <code>extension/</code> yang mengirim URL ke <code>/api/snailly/track</code>.</p>
                 </div>
             </div>
         </section>
