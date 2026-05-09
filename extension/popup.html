@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Snailly Tracker</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="popup">
+    <header class="header">
+      <img src="icon.png" alt="Snailly" class="logo">
+      <div>
+        <h1>Snailly Tracker</h1>
+        <p>Chrome/Edge extension untuk tracking dan blocking URL lokal.</p>
+      </div>
+    </header>
+
+    <section class="status-card" id="statusCard">
+      <strong id="statusTitle">Loading...</strong>
+      <span id="statusText">Checking extension config...</span>
+    </section>
+
+    <label>Backend URL
+      <input id="backendBase" type="url" placeholder="http://127.0.0.1:8000">
+    </label>
+
+    <button id="powerButton" class="power-btn" type="button">Tracking ON/OFF</button>
+    <div class="grid-two">
+      <label class="check-row"><input id="enabled" type="checkbox"> Tracking ON</label>
+      <label class="check-row"><input id="blockDangerous" type="checkbox"> Block dangerous</label>
+    </div>
+    <label class="check-row"><input id="ignoreLocalhost" type="checkbox"> Ignore localhost/dashboard URL</label>
+
+    <hr>
+
+    <label>Email parent
+      <input id="email" type="email" placeholder="email yang diregister di web">
+    </label>
+    <label>Password
+      <input id="password" type="password" placeholder="password akun parent">
+    </label>
+
+    <div class="actions">
+      <button id="loginButton" class="btn primary">Login & Ambil Data Anak</button>
+      <button id="logoutButton" class="btn ghost" type="button">Logout Tracker</button>
+    </div>
+
+    <label>Child yang ditrack
+      <select id="childSelect">
+        <option value="">Login dulu / refresh child</option>
+      </select>
+    </label>
+
+    <div class="actions">
+      <button id="saveButton" class="btn secondary">Save Config</button>
+      <button id="refreshButton" class="btn secondary">Refresh Child</button>
+    </div>
+
+    <button id="testButton" class="btn ghost">Test Track Tab Sekarang</button>
+
+    <section class="mini-log">
+      <h2>Last tracked</h2>
+      <p id="lastTracked">Belum ada.</p>
+      <p id="lastError" class="error"></p>
+    </section>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
