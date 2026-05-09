@@ -1,4 +1,12 @@
-# Snailly
+<p align="center">
+  <img src="public/assets/img/logo.png" alt="Snailly Logo" width="220">
+</p>
+
+<h1 align="center">Snailly</h1>
+
+<p align="center">
+  Aplikasi monitoring aktivitas internet anak berbasis web dashboard, backend lokal, dan Chrome Extension.
+</p>
 
 Snailly adalah aplikasi monitoring aktivitas internet anak yang dibuat untuk membantu orang tua memantau website yang dibuka anak. Project ini berjalan secara lokal menggunakan web dashboard, backend PHP, database MySQL, dan Chrome Extension sebagai tracker URL.
 
