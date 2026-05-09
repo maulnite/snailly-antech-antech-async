@@ -1,81 +1,100 @@
-# Snailly versi Laravel
+<p align="center">
+  <img src="public/assets/img/logo.png" alt="Snailly Logo" width="220">
+</p>
 
-Folder ini adalah hasil konversi project `snailly` PHP lokal menjadi struktur Laravel.
+<h1 align="center">Snailly</h1>
 
-## Isi konversi
+<p align="center">
+  Aplikasi monitoring aktivitas internet anak berbasis Laravel, web dashboard, dan Chrome Extension.
+</p>
 
-- UI utama dipindah ke Blade: `resources/views/snailly/app.blade.php`
-- Sidebar dipindah ke Blade partial: `resources/views/snailly/partials/sidebar.blade.php`
-- Routing Laravel disiapkan di `routes/snailly.php`
-- Controller halaman: `app/Http/Controllers/SnaillyPageController.php`
-- Controller API: `app/Http/Controllers/SnaillyApiController.php`
-- Backend lama dipertahankan sebagai service legacy di `app/Services/SnaillyLegacy`
-- Asset CSS/JS/logo dipindah ke `public/assets`
-- Schema database dipindah ke `database/snailly_schema.sql`
-- Data blocklist dipindah ke `data/`
-- Extension sudah diarahkan ke endpoint Laravel `/api/snailly/proxy` dan `/api/snailly/track`
+Snailly adalah aplikasi monitoring aktivitas internet anak yang dibuat untuk membantu orang tua memantau website yang dibuka anak. Aplikasi ini menyediakan dashboard untuk parent, dashboard untuk child, sistem rule website, jadwal akses internet, request access, dan Chrome Extension sebagai tracker URL.
 
-## Cara pasang ke project Laravel yang sudah ada
+Project ini dibuat sebagai prototype parental monitoring untuk kebutuhan demo, tugas kuliah, dan pengembangan aplikasi keamanan digital sederhana. Versi terbaru project ini sudah dimigrasikan ke Laravel, dengan beberapa logic lama tetap dipertahankan dalam service layer agar fitur yang sudah dibuat tetap berjalan stabil.
 
-1. Copy semua folder/file dari paket ini ke root project Laravel kamu.
+## Gambaran Umum
 
-2. Buka `routes/web.php`, lalu tambahkan baris ini di bagian bawah:
+Snailly punya tiga bagian utama:
 
-```php
-require __DIR__ . '/snailly.php';
-```
+1. **Parent Dashboard**  
+   Digunakan oleh orang tua untuk melihat aktivitas browsing anak, mengatur rule website, membuat jadwal akses internet, melihat request access, dan membuat laporan aktivitas.
 
-3. Pastikan `.env` memakai database MySQL/MariaDB Laragon. Contoh:
+2. **Child Dashboard**  
+   Digunakan oleh anak untuk melihat ringkasan aktivitas, status safe mode, learning streak, serta akses ke halaman yang aman seperti Scratch.
 
-```env
-DB_CONNECTION=mysql
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_DATABASE=snailly_kids
-DB_USERNAME=root
-DB_PASSWORD=
-```
+3. **Chrome Extension**  
+   Digunakan untuk membaca URL yang sedang dibuka di browser anak, lalu mengirimkan data aktivitas tersebut ke backend Snailly.
 
-4. Jalankan server Laravel:
+## Fitur Utama
 
-```bash
-php artisan serve
-```
+- Register dan login parent
+- Akun child dengan username dan password sendiri
+- Dashboard parent dan dashboard child
+- Tracking URL melalui Chrome Extension
+- Activity log berdasarkan child, status, tanggal, dan pencarian URL
+- Custom website rule:
+  - Allow
+  - Warn Only
+  - Block
+- Rule berdasarkan:
+  - domain
+  - subdomain
+  - URL/path
+  - keyword
+  - category
+- Policy engine untuk menentukan apakah website aman, warning, atau blocked
+- Schedule internet untuk membatasi jam browsing anak
+- Request access dari anak ke parent
+- Approve atau deny request access
+- Report harian/mingguan
+- Export log ke CSV
+- Print/save report ke PDF
+- Learning streak calendar
+- Blocked page untuk website yang tidak diizinkan
+- Tracker status dari extension
+- Support penggunaan session dan cookie untuk web dashboard
 
-5. Buka aplikasi:
+## Teknologi yang Digunakan
 
-```text
-http://127.0.0.1:8000/snailly
-```
+- Laravel
+- PHP
+- Blade
+- HTML
+- CSS
+- JavaScript
+- MySQL / MariaDB
+- Chrome Extension Manifest V3
+- XAMPP atau Laravel development server
 
-6. Register akun parent, lalu tambahkan child dari menu Children.
-
-## Catatan penting
-
-Backend Snailly masih memakai logic legacy berbasis service PHP supaya fitur aslinya tetap jalan. Bedanya, sekarang entry point-nya sudah lewat route dan controller Laravel, bukan `index.php`, `api/proxy.php`, dan `api/track.php` langsung.
-
-Karena endpoint API memakai request JSON dari JavaScript dan extension, route Snailly API sengaja dibuat tanpa CSRF middleware. Ini cocok untuk local demo/praktikum. Untuk production, perlu hardening lagi seperti HTTPS resmi, rate limit, CSRF/CORS yang lebih ketat, dan validasi request lebih lengkap.
-
-## URL penting
-
-```text
-/snailly                  Halaman utama Snailly
-/api/snailly/proxy        Backend dashboard
-/api/snailly/track        Endpoint tracking extension
-/api/snailly/blocklist    Helper cek blocklist
-```
-
-## Extension
-
-Folder `extension/` sudah ikut dikonversi. Untuk menjalankan:
-
-1. Buka `chrome://extensions/`
-2. Aktifkan Developer Mode
-3. Klik Load unpacked
-4. Pilih folder `extension`
-5. Isi Backend URL dengan:
+## Struktur Singkat Project
 
 ```text
-http://127.0.0.1:8000
-```
-
+snailly/
+├── app/
+│   ├── Http/
+│   │   └── Controllers/
+│   └── Services/
+│       └── SnaillyLegacy/
+├── database/
+│   └── migrations/
+├── public/
+│   ├── assets/
+│   │   ├── css/
+│   │   ├── img/
+│   │   └── js/
+│   └── index.php
+├── resources/
+│   └── views/
+│       └── snailly/
+├── routes/
+│   ├── api.php
+│   └── web.php
+├── extension/
+│   ├── manifest.json
+│   ├── background.js
+│   ├── popup.html
+│   ├── popup.css
+│   └── popup.js
+├── .env
+├── artisan
+└── composer.json
