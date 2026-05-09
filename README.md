@@ -3,17 +3,12 @@
 </p>
 
 <h1 align="center">Snailly</h1>
-<p align="center">
-  <img src="public/assets/img/logo.png" alt="Snailly Logo" width="220">
-</p>
-
-<h1 align="center">Snailly</h1>
 
 <p align="center">
-  Aplikasi monitoring aktivitas internet anak berbasis Laravel, web dashboard, dan Chrome Extension.
+  Aplikasi monitoring aktivitas internet anak berbasis web dashboard, backend lokal, dan Chrome Extension.
 </p>
 
-Snailly adalah aplikasi monitoring aktivitas internet anak yang dibuat untuk membantu orang tua memantau website yang dibuka anak. Aplikasi ini menyediakan dashboard untuk parent, dashboard untuk child, sistem rule website, jadwal akses internet, request access, dan Chrome Extension sebagai tracker URL.
+Snailly adalah aplikasi monitoring aktivitas internet anak yang dibuat untuk membantu orang tua memantau website yang dibuka anak. Project ini berjalan secara lokal menggunakan web dashboard, backend PHP, database MySQL, dan Chrome Extension sebagai tracker URL.
 
 Project ini dibuat sebagai prototype parental monitoring untuk kebutuhan demo, tugas kuliah, dan pengembangan aplikasi keamanan digital sederhana. Versi terbaru project ini sudah dimigrasikan ke Laravel, dengan beberapa logic lama tetap dipertahankan dalam service layer agar fitur yang sudah dibuat tetap berjalan stabil.
 
