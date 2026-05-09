@@ -98,7 +98,7 @@ snailly/
 ├── .env
 ├── artisan
 └── composer.json
-
+```
 
 ## Note
 
