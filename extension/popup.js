@@ -1,5 +1,5 @@
 const DEFAULTS = {
-  backendBase: 'http://127.0.0.1:8000',
+  backendBase: 'https://snailly.test',
   token: '',
   childId: '',
   enabled: true,
