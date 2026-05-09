@@ -1,58 +1,156 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Snailly
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Snailly adalah aplikasi monitoring aktivitas internet anak yang dibuat untuk membantu orang tua memantau website yang dibuka anak. Project ini berjalan secara lokal menggunakan web dashboard, backend PHP, database MySQL, dan Chrome Extension sebagai tracker URL.
 
-## About Laravel
+Project ini awalnya dikembangkan sebagai versi web lokal yang bisa dijalankan dengan XAMPP, sehingga cocok untuk kebutuhan demo, tugas kuliah, atau pengembangan prototype parental control sederhana.
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+## Gambaran Umum
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+Snailly punya dua sisi utama:
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+1. **Parent Dashboard**  
+   Digunakan oleh orang tua untuk melihat aktivitas anak, mengatur rule website, membuat jadwal akses internet, melihat request access, dan membuat laporan.
 
-## Learning Laravel
+2. **Child Dashboard**  
+   Digunakan oleh anak untuk melihat ringkasan aktivitas, safe mode, learning streak, serta request akses ketika website tertentu diblokir.
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+Selain itu, Snailly juga memakai **Chrome Extension** untuk membaca URL yang sedang dibuka di browser dan mengirimkannya ke backend lokal.
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+## Fitur Utama
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
+- Register dan login parent
+- Akun child dengan username dan password sendiri
+- Dashboard parent dan dashboard child
+- Tracking URL lewat Chrome Extension
+- Activity log berdasarkan child dan status
+- Filter log berdasarkan anak, status, tanggal, dan pencarian URL
+- Custom rule website:
+  - Allow
+  - Warn Only
+  - Block
+- Rule berdasarkan:
+  - domain
+  - subdomain
+  - URL/path
+  - keyword
+  - category
+- Schedule internet untuk membatasi jam akses anak
+- Request access dari anak ke parent
+- Approve atau deny request access
+- Report harian/mingguan
+- Export log ke CSV
+- Print/save report ke PDF
+- Learning streak calendar
+- Blocked page untuk website yang tidak diizinkan
 
-## Agentic Development
+## Teknologi yang Digunakan
 
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+- HTML
+- CSS
+- JavaScript
+- PHP
+- MySQL / MariaDB
+- Chrome Extension Manifest V3
+- XAMPP untuk local server
 
-```bash
-composer require laravel/boost --dev
+## Struktur Singkat Project
 
-php artisan boost:install
+```text
+snailly/
+├── api/
+│   ├── proxy.php
+│   └── track.php
+├── assets/
+│   ├── css/
+│   └── js/
+├── config/
+│   └── database.php
+├── database/
+│   └── schema.sql
+├── extension/
+│   ├── manifest.json
+│   ├── background.js
+│   ├── popup.html
+│   ├── popup.css
+│   └── popup.js
+├── lib/
+│   ├── Database.php
+│   ├── LocalBackend.php
+│   ├── PolicyEngine.php
+│   └── Security.php
+├── blocked.php
+└── index.php
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+## Cara Menjalankan di Lokal
 
-## Contributing
+1. Pindahkan folder project ke `htdocs` XAMPP.
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+```text
+C:\xampp\htdocs\snailly\
+```
 
-## Code of Conduct
+2. Jalankan Apache dan MySQL dari XAMPP.
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+3. Buka aplikasi di browser.
 
-## Security Vulnerabilities
+```text
+http://localhost/snailly/
+```
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+4. Register akun parent.
 
-## License
+5. Tambahkan data child melalui menu Children.
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+6. Install extension dari folder `extension`.
+   - Buka `chrome://extensions/`
+   - Aktifkan Developer Mode
+   - Klik Load unpacked
+   - Pilih folder `extension`
+
+7. Isi Backend URL di extension.
+
+```text
+http://localhost/snailly
+```
+
+8. Login extension, pilih child, lalu aktifkan tracking.
+
+## Database
+
+Database yang digunakan adalah MySQL/MariaDB. Secara default database bernama:
+
+```text
+snailly_kids
+```
+
+Tabel utama yang digunakan:
+
+- parents
+- children
+- activity_logs
+- rules
+- access_requests
+- tokens
+
+Database dan tabel akan dibuat berdasarkan struktur yang ada di `database/schema.sql`.
+
+## Catatan Keamanan
+
+Beberapa hal keamanan yang sudah diterapkan:
+
+- Password disimpan menggunakan hashing
+- Session menggunakan cookie `HttpOnly`
+- Support cookie `Secure` jika dijalankan dengan HTTPS
+- Role parent, child, dan tracker dipisahkan
+- Extension memakai tracker token khusus
+- Token memiliki masa berlaku
+- Query database memakai prepared statement
+- Child hanya bisa mengakses data miliknya sendiri
+- Parent hanya bisa mengakses child yang terhubung dengan akunnya
+
+Untuk penggunaan production, masih perlu penyesuaian tambahan seperti HTTPS resmi, konfigurasi server yang lebih aman, dan pembatasan akses database yang lebih ketat.
+
+## Catatan
+
+Project ini dibuat sebagai prototype aplikasi parental monitoring. Untuk perangkat laptop/PC, tracking URL dilakukan melalui Chrome Extension. Untuk perangkat seperti HP atau tablet, monitoring bisa dikembangkan lagi menggunakan pendekatan DNS-level monitoring atau aplikasi Android terpisah.
