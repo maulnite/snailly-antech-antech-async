@@ -103,3 +103,12 @@ snailly/
 ├── .env
 ├── artisan
 └── composer.json
+
+
+## Note
+
+Project ini dibuat untuk kebutuhan tugas kuliah sebagai bentuk recreate dan pengembangan ulang dari project Snailly yang sudah ada sebelumnya. Referensi utama project ini berasal dari repository berikut:
+
+https://github.com/unikom-codelabs/snailly-desktop
+
+Versi ini tidak dimaksudkan untuk mengklaim sebagai project original sepenuhnya. Beberapa konsep utama seperti parental monitoring, dashboard, dan tracking aktivitas internet anak mengacu pada project tersebut, lalu dikembangkan kembali dengan pendekatan berbasis Laravel, web dashboard, MySQL, dan Chrome Extension.
