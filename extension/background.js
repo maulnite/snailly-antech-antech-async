@@ -144,14 +144,17 @@ async function trackTab(tab, reason = 'tab_event') {
         url,
         title: tab?.title || '',
         at: new Date().toISOString(),
-        label: json.label || (json.blocked ? 'bahaya' : 'aman'),
-        blocked: Boolean(json.blocked),
-        duplicate: Boolean(json.duplicate)
+        label: json.label || (json.action === 'warn' ? 'peringatan' : (json.blocked ? 'bahaya' : 'aman')),
+        action: json.action || (json.blocked ? 'block' : 'allow'),
+        blocked: json.blocked === true,
+        duplicate: Boolean(json.duplicate),
+        category: json.category || '',
+        reason: json.reason || ''
       },
       lastError: ''
     });
 
-    if (settings.blockDangerous && json.blocked && tab?.id) {
+    if (settings.blockDangerous && json.blocked === true && tab?.id) {
       const blockUrl = `${settings.backendBase}/blocked.php?url=${encodeURIComponent(url)}&childId=${encodeURIComponent(settings.childId)}&token=${encodeURIComponent(settings.token)}&category=${encodeURIComponent(json.category || '')}&reason=${encodeURIComponent(json.reason || '')}`;
       await chrome.tabs.update(tab.id, { url: blockUrl });
     }

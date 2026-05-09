@@ -113,8 +113,10 @@ final class SnaillyDatabase
     {
         $sql = file_get_contents(__DIR__ . '/../database/schema.sql');
         if ($sql === false) throw new RuntimeException('database/schema.sql tidak ditemukan.', 500);
+
         $this->pdo->exec($sql);
         $this->ensureTokensSchema();
+        $this->ensureRulesSchema();
     }
 
     private function ensureTokensSchema(): void
@@ -137,7 +139,20 @@ final class SnaillyDatabase
             // If the local MySQL variant already has a compatible type, keep going.
         }
     }
+    private function ensureRulesSchema(): void
+    {
+        try {
+            $this->pdo->exec("ALTER TABLE rules MODIFY type VARCHAR(20) NOT NULL DEFAULT 'block'");
+        } catch (Throwable $e) {
+            // Keep going if already compatible.
+        }
 
+        try {
+            $this->pdo->exec("ALTER TABLE rules MODIFY match_type VARCHAR(30) NOT NULL DEFAULT 'domain'");
+        } catch (Throwable $e) {
+            // Keep going if already compatible.
+        }
+    }
     private function loadUsers(): array
     {
         $rows = $this->pdo->query('SELECT * FROM parents ORDER BY created_at ASC')->fetchAll();
