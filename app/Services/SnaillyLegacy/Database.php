@@ -549,17 +549,12 @@ final class SnaillyDatabase
 
     public function report(string $parentId, string $childId, array $query): array
     {
-        // Jangan pakai listLogs() untuk total report.
-        // listLogs() sengaja dibatasi max 100 data untuk pagination UI,
-        // sedangkan report harus menghitung semua data sesuai filter.
+        // Do not call listLogs() for report totals. listLogs() intentionally caps
+        // page size to 100 for UI pagination, while report cards must count the
+        // whole filtered dataset.
         [$where, $params] = $this->buildLogFilterWhere($parentId, $childId, $query);
 
-        $stmt = $this->pdo->prepare("
-            SELECT l.grant_access, l.classified_url_json, l.url
-            FROM activity_logs l
-            {$where}
-            ORDER BY l.created_at DESC
-        ");
+        $stmt = $this->pdo->prepare("SELECT l.grant_access, l.classified_url_json, l.url FROM activity_logs l {$where} ORDER BY l.created_at DESC");
         $stmt->execute($params);
 
         $total = 0;
@@ -567,37 +562,31 @@ final class SnaillyDatabase
         $danger = 0;
         $categories = [];
         $hosts = [];
+        $riskyHosts = [];
 
         foreach ($stmt->fetchAll() as $row) {
             $total++;
-
             $isSafe = $this->isLogRowSafe($row);
-
-            if ($isSafe) {
-                $safe++;
-            } else {
-                $danger++;
-            }
+            if ($isSafe) $safe++; else $danger++;
 
             $classification = $this->firstClassification($row['classified_url_json'] ?? null);
             $cat = (string)($classification['category'] ?? ($isSafe ? 'Safe' : 'Risky'));
             $categories[$cat] = ($categories[$cat] ?? 0) + 1;
 
             $host = strtolower((string)(parse_url((string)($row['url'] ?? ''), PHP_URL_HOST) ?: ''));
-
             if ($host !== '') {
                 $hosts[$host] = ($hosts[$host] ?? 0) + 1;
+                if (!$isSafe) $riskyHosts[$host] = ($riskyHosts[$host] ?? 0) + 1;
             }
         }
 
         arsort($categories);
         arsort($hosts);
+        arsort($riskyHosts);
 
-        // Recent logs tetap cukup 10 saja, karena ini hanya untuk list terbaru di report.
         $recentQuery = $query;
         $recentQuery['page'] = 1;
         $recentQuery['limit'] = 10;
-
         $recent = $this->listLogs($parentId, $childId, $recentQuery)['items'];
 
         return [
@@ -608,8 +597,17 @@ final class SnaillyDatabase
             'safePercent' => $total ? round(($safe / $total) * 100) : 100,
             'categories' => $categories,
             'topHosts' => array_slice($hosts, 0, 8, true),
+            'topRiskyHosts' => array_slice($riskyHosts, 0, 8, true),
             'recent' => $recent,
         ];
+    }
+
+    public function cleanupOldLogs(int $days = 30): int
+    {
+        $days = max(1, min(365, $days));
+        $stmt = $this->pdo->prepare('DELETE FROM activity_logs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)');
+        $stmt->execute([$days]);
+        return $stmt->rowCount();
     }
 
     private function buildLogFilterWhere(string $parentId, string $childId, array $query): array

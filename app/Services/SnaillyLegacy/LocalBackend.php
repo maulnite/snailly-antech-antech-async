@@ -52,6 +52,10 @@ final class LocalBackend
             return $this->json(['data' => $this->publicUser($user)]);
         }
 
+        if ($path === '/policy-check' && $method === 'POST') {
+            return $this->policyCheck($this->requireUser($authHeader, ['parent', 'tracker']), $body);
+        }
+
         if (preg_match('#^/dashboard/overview/([^/]+)$#', $path, $m) && $method === 'GET') {
             $user = $this->requireUser($authHeader, ['parent', 'child']);
             $this->assertChildScope($user, $m[1], true);
@@ -610,6 +614,33 @@ final class LocalBackend
         return $this->json(['data' => $this->store->statisticMonth((string)$user['id'], $childId, $date)]);
     }
 
+    private function policyCheck(array $user, array $body): array
+    {
+        $childId = trim((string)($body['childId'] ?? $user['_sessionChildId'] ?? ''));
+        $url = trim((string)($body['url'] ?? ''));
+        if ($url === '' || !preg_match('#^https?://#i', $url)) {
+            return $this->json(['ok' => false, 'message' => 'A valid http/https URL is required.'], 422);
+        }
+        $this->assertChildScope($user, $childId, false);
+
+        $classification = SnaillyPolicyEngine::classify($this->db, (string)$user['id'], $childId, $url, true);
+        $action = (string)($classification['action'] ?? (($classification['label'] ?? 'aman') === 'bahaya' ? 'block' : 'allow'));
+        if (!in_array($action, ['allow', 'warn', 'block'], true)) $action = 'allow';
+
+        return $this->json([
+            'ok' => true,
+            'message' => 'Policy checked without writing a log.',
+            'blocked' => $action === 'block',
+            'grant_access' => $action !== 'block',
+            'label' => (string)($classification['label'] ?? 'aman'),
+            'action' => $action,
+            'category' => (string)($classification['category'] ?? 'Safe'),
+            'risk' => (string)($classification['risk'] ?? 'Low'),
+            'reason' => (string)($classification['reason'] ?? 'No risky rule matched.'),
+            'score' => (int)($classification['score'] ?? 0),
+        ]);
+    }
+
     private function dashboardOverview(array $user, string $childId, array $query): array
     {
         $year = (int)($query['year'] ?? date('Y'));
@@ -619,6 +650,7 @@ final class LocalBackend
             'logs' => $this->store->listLogs((string)$user['id'], $childId, ['page' => 1, 'limit' => (int)($query['limit'] ?? 5), 'period' => 'all']),
             'yearStats' => $this->store->statisticYear((string)$user['id'], $childId, $year),
             'monthStats' => $this->store->statisticMonth((string)$user['id'], $childId, $monthDate),
+            'report' => $this->store->report((string)$user['id'], $childId, ['period' => 'all']),
         ]]);
     }
 
@@ -1126,6 +1158,7 @@ final class LocalBackend
 
     private function canUseLiteSnapshot(string $path): bool
     {
+        if ($path === '/policy-check') return true;
         if ($path === '/children/overview' || str_starts_with($path, '/dashboard/overview/')) return true;
         if (preg_match('#^/log/(summary|statistic-year|statistic-month)/#', $path)) return true;
         if (preg_match('#^/log/[^/]+$#', $path)) return true;

@@ -30,9 +30,7 @@
       localStorage.removeItem('snailly_parent_token');
     }
 
-    if (safeUser) {
-      delete safeUser.accessToken;
-    }
+    if (safeUser) delete safeUser.accessToken;
 
     state.user = safeUser;
     safeUser ? writeJSON('snailly_user', safeUser) : localStorage.removeItem('snailly_user');
@@ -56,7 +54,7 @@
   }
   function token() {
     return state.user?.accessToken || localStorage.getItem('snailly_parent_token') || '';
-  } 
+  }
   function kidToken() { return state.kidSession?.accessToken || ''; }
   function activeAuthToken() { return token() || kidToken(); }
   function escapeHTML(value) {
@@ -120,7 +118,7 @@
 
   async function bootstrapSession() {
     try {
-      const current = await api('/auth/me', { auth: false });
+      const current = await api('/auth/me', { auth: true });
       const sessionUser = normalizeResponse(current);
       if (!sessionUser?.id) return;
       if (sessionUser.role === 'child') {
@@ -245,26 +243,22 @@
   }
 
   async function logout() {
-    try {
-      await api('/auth/logout', { method: 'POST', auth: false });
-    } catch (_) {}
-
+    try { await api('/auth/logout', { method: 'POST', auth: false }); } catch (_) {}
     localStorage.removeItem('snailly_user');
-    localStorage.removeItem('snailly_parent_token'); // tambahan penting
+    localStorage.removeItem('snailly_parent_token');
     localStorage.removeItem('snailly_children');
     localStorage.removeItem('snailly_selected_child_id');
     localStorage.removeItem('snailly_current_user');
     localStorage.removeItem('snailly_kid_session');
-
     state.user = null;
     state.children = [];
     state.selectedChildId = '';
     state.currentUser = null;
     state.kidSession = null;
-
     toast('Logged out.', 'success');
     go('home');
   }
+
   async function childLogout() {
     try { await api('/auth/logout', { method: 'POST', auth: false }); } catch (_) {}
     setKidSession(null);
@@ -516,7 +510,7 @@
         } catch (_) {
           updateChildSafeMode({ enabled: false, blockDangerous: false });
         }
-      }, 5000);
+      }, 30000);
 
       root.innerHTML = childDashboardHTML(child, summary, logs.items || [], monthStats, tracker);
 
@@ -748,14 +742,15 @@
       const logs = overview.logs || { items: [] };
       const yearStats = overview.yearStats || [];
       const monthStats = overview.monthStats || [];
-      root.innerHTML = dashboardHTML(summary, logs, yearStats, monthStats);
+      const report = overview.report || {};
+      root.innerHTML = dashboardHTML(summary, logs, yearStats, monthStats, report);
       bindGrantButtons(root, () => loadDashboard());
     } catch (error) {
       root.innerHTML = `<div class="panel empty-state">${escapeHTML(messageFromError(error))}</div>`;
     }
   }
 
-  function dashboardHTML(summary, logs, yearStats, monthStats) {
+  function dashboardHTML(summary, logs, yearStats, monthStats, report = {}) {
     const safe = Number(summary.totalSafeWebsites ?? summary.totalSafeWebsite ?? 0);
     const danger = Number(summary.totalDangerousWebsites ?? summary.totalDangerousWebsite ?? 0);
     const total = safe + danger;
@@ -777,6 +772,10 @@
           <p>Your child accessed ${goodPercent}% positive content</p>
         </div>
       </section>
+      <section class="feature-grid two-cols">
+        <div class="panel"><h2>Top Visited Website</h2>${hostListHTML(report.topHosts || {})}</div>
+        <div class="panel"><h2>Top Risky / Blocked Website</h2>${hostListHTML(report.topRiskyHosts || {})}</div>
+      </section>
       <section class="panel">
         <h2>New Activity</h2>
         ${logsTableHTML(logs.items || [])}
@@ -791,6 +790,12 @@
       <strong>${escapeHTML(value)}</strong>
       <small>Click to view logs</small>
     </button>`;
+  }
+
+  function hostListHTML(hosts) {
+    const entries = Object.entries(hosts || {}).slice(0, 8);
+    if (!entries.length) return '<div class="empty-state">No host data yet.</div>';
+    return `<div class="category-list">${entries.map(([host, count]) => `<div><span>${escapeHTML(host)}</span><strong>${escapeHTML(count)}</strong></div>`).join('')}</div>`;
   }
 
   function barChartHTML(items) {
@@ -1114,9 +1119,19 @@
   async function exportLogsCSV() {
     if (!requireUser()) return;
     try {
-      const { childId, params } = currentLogParams(1, 1000);
-      const response = await api(`/log/${childId}`, { auth: true, params });
-      const logs = normalizeResponse(response)?.items || [];
+      const logs = [];
+      let page = 1;
+      let totalPage = 1;
+      let childId = 'ALL';
+      do {
+        const current = currentLogParams(page, 100);
+        childId = current.childId;
+        const response = await api(`/log/${childId}`, { auth: true, params: current.params });
+        const payload = normalizeResponse(response) || {};
+        logs.push(...(payload.items || []));
+        totalPage = Number(payload.totalPage || 1);
+        page += 1;
+      } while (page <= totalPage && page <= 200);
       if (!logs.length) {
         toast('Tidak ada log untuk diexport.', 'error');
         return;
@@ -1578,6 +1593,7 @@
   function reportHTML(report) {
     const cats = report.categories || {};
     const hosts = report.topHosts || {};
+    const riskyHosts = report.topRiskyHosts || {};
     const recent = report.recent || [];
     const reportDate = document.getElementById('reportDate')?.value || new Date().toISOString().slice(0, 10);
     const reportPeriod = document.getElementById('reportPeriod')?.value || 'daily';
@@ -1590,16 +1606,17 @@
         ${statCard('⚠️','Risky / Blocked', report.danger || 0, 'negative', 'negative')}
         ${statCard('⭐','Safety Score', `${report.safePercent ?? 100}%`, 'positive', 'all')}
       </section>
-      <section class="feature-grid two-cols report-section-grid report-print-area">
+      <section class="report-summary-grid report-print-area">
         <div class="panel"><h2>Category Breakdown</h2>${Object.keys(cats).length ? `<div class="category-list">${Object.entries(cats).map(([k,v]) => `<div><span>${escapeHTML(k)}</span><strong>${v}</strong></div>`).join('')}</div>` : '<div class="empty-state">No category data.</div>'}</div>
         <div class="panel"><h2>Most Visited Hosts</h2>${Object.keys(hosts).length ? `<div class="category-list">${Object.entries(hosts).map(([k,v]) => `<div><span>${escapeHTML(k)}</span><strong>${v}</strong></div>`).join('')}</div>` : '<div class="empty-state">No host data.</div>'}</div>
+        <div class="panel"><h2>Top Risky / Blocked Hosts</h2>${Object.keys(riskyHosts).length ? `<div class="category-list">${Object.entries(riskyHosts).map(([k,v]) => `<div><span>${escapeHTML(k)}</span><strong>${v}</strong></div>`).join('')}</div>` : '<div class="empty-state">No risky host data.</div>'}</div>
       </section>
       <section class="panel report-log-section"><h2>Recent Logs in Report</h2>${logsTableHTML(recent)}</section>
     </div>
-    ${printReportHTML({ report, cats, hosts, recent, reportDate, reportPeriod, childLabel })}`;
+    ${printReportHTML({ report, cats, hosts, riskyHosts, recent, reportDate, reportPeriod, childLabel })}`;
   }
 
-  function printReportHTML({ report, cats, hosts, recent, reportDate, reportPeriod, childLabel }) {
+  function printReportHTML({ report, cats, hosts, riskyHosts = {}, recent, reportDate, reportPeriod, childLabel }) {
     return `<article class="print-report-document" aria-hidden="true">
       <header class="print-report-header">
         <div>
@@ -1779,27 +1796,17 @@
 
     function unwrapBlockedUrl(value) {
       let current = String(value || '');
-
       for (let i = 0; i < 5; i++) {
         try {
           const parsed = new URL(current);
-
-          if (!parsed.pathname.toLowerCase().includes('/snailly/blocked')) {
-            break;
-          }
-
+          if (!parsed.pathname.toLowerCase().includes('/snailly/blocked')) break;
           const next = parsed.searchParams.get('url');
-
-          if (!next || next === current) {
-            break;
-          }
-
+          if (!next || next === current) break;
           current = next;
         } catch (_) {
           break;
         }
       }
-
       return current;
     }
 
@@ -1841,7 +1848,9 @@
     async function checkApprovedAndRedirect() {
       if (!url || !requestToken || !childId) return;
       try {
-        const response = await fetch('/api/snailly/track', {
+        const apiUrl = new URL('/api/snailly/proxy', window.location.origin);
+        apiUrl.searchParams.set('path', '/policy-check');
+        const response = await fetch(apiUrl.toString(), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Snailly-Authorization': `Bearer ${requestToken}` },
           body: JSON.stringify({ childId, url, title: 'Blocked page policy check', source: 'blocked_page_policy_check' })

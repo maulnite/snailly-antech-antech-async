@@ -27,10 +27,16 @@ $body = json_decode(file_get_contents('php://input') ?: '{}', true);
 if (!is_array($body)) respond(['ok' => false, 'message' => 'Invalid JSON body.'], 400);
 
 $url = trim((string)($body['url'] ?? ''));
+if (strlen($url) > 2000) {
+    $url = substr($url, 0, 2000);
+}
 $childId = trim((string)($body['childId'] ?? ''));
 $title = trim((string)($body['title'] ?? ''));
 $source = trim((string)($body['source'] ?? 'extension')) ?: 'extension';
 if ($url === '' || !isHttpUrl($url)) respond(['ok' => false, 'message' => 'A valid http/https URL is required.'], 422);
+if (isSnaillyInternalUrl($url)) {
+    respond(['ok' => true, 'skipped' => true, 'message' => 'Internal Snailly URL ignored.', 'blocked' => false, 'grant_access' => true], 200);
+}
 $token = bearerToken();
 if ($token === '') respond(['ok' => false, 'message' => 'Missing extension auth token. Please login from the extension popup.'], 401);
 
@@ -106,7 +112,7 @@ try {
         'updatedAt' => $now,
     ];
     $dbStore->insertLog($log);
-
+    maybeCleanupOldLogs($dbStore);
 
     respond([
         'ok' => true,
@@ -147,6 +153,9 @@ function recentDuplicate(array $db, string $parentId, string $childId, string $u
 function isHttpUrl(string $url): bool { $p=parse_url($url); $s=strtolower((string)($p['scheme']??'')); return in_array($s,['http','https'],true) && !empty($p['host']); }
 function normalizeUrl(string $url, bool $hostOnly=false): string { $url=trim(strtolower($url)); $url=preg_replace('#^https?://#','',$url) ?? $url; $url=preg_replace('#^www\.#','',$url) ?? $url; $url=rtrim($url,"/\r\n\t "); if($hostOnly) $url=explode('/',$url)[0]; return $url; }
 function hostOf(string $url): string { return strtolower((string)(parse_url($url, PHP_URL_HOST) ?: normalizeUrl($url,true))); }
+function isPrivateOrLocalHost(string $host): bool { $host=strtolower($host); if(in_array($host,['localhost','127.0.0.1','::1'],true)) return true; if(preg_match('/^192\.168\./',$host)) return true; if(preg_match('/^10\./',$host)) return true; if(preg_match('/^172\.(1[6-9]|2\d|3[0-1])\./',$host)) return true; return false; }
+function isSnaillyInternalUrl(string $url): bool { $p=parse_url($url); $host=strtolower((string)($p['host']??'')); $path=strtolower((string)($p['path']??'')); if($host==='' || $path==='') return false; $isSnaillyPath=str_contains($path,'/snailly') || str_contains($path,'/api/snailly') || str_contains($path,'/blocked'); return $isSnaillyPath && isPrivateOrLocalHost($host); }
+function maybeCleanupOldLogs(SnaillyDatabase $store): void { $days=(int)(getenv('SNAILLY_LOG_RETENTION_DAYS') ?: 30); $days=max(1,min(365,$days)); $marker=function_exists('storage_path') ? storage_path('framework/cache/snailly_last_cleanup.txt') : sys_get_temp_dir().'/snailly_last_cleanup.txt'; $last=is_file($marker) ? (int)file_get_contents($marker) : 0; if(time()-$last < 86400) return; try { $store->cleanupOldLogs($days); @file_put_contents($marker,(string)time()); } catch(Throwable $e) {} }
 function id(string $prefix): string { return $prefix . '_' . bin2hex(random_bytes(6)); }
 function classificationOf(array $log): array { $labels=$log['classified_url'] ?? []; return is_array($labels) && isset($labels[0]) && is_array($labels[0]) ? $labels[0] : []; }
 function isDangerLog(array $log): bool { if(($log['grant_access'] ?? null) === true) return false; if(($log['grant_access'] ?? null) === false) return true; return (string)(classificationOf($log)['FINAL_label'] ?? 'aman') !== 'aman'; }

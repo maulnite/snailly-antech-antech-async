@@ -13,30 +13,22 @@ const recentByTab = new Map();
 let lastStatusReportAt = 0;
 let lastStatusReportKey = '';
 const STATUS_REPORT_MIN_INTERVAL_MS = 60000;
+const DUPLICATE_WINDOW_MS = 30000;
+
 function normalizeBase(base) {
   return String(base || DEFAULTS.backendBase).replace(/\/+$/, '');
 }
+
 function isPrivateOrLocalHost(hostname) {
   const host = String(hostname || '').toLowerCase();
-
-  if (['localhost', '127.0.0.1', '::1'].includes(host)) {
-    return true;
-  }
-
-  if (/^192\.168\./.test(host)) {
-    return true;
-  }
-
-  if (/^10\./.test(host)) {
-    return true;
-  }
-
+  if (['localhost', '127.0.0.1', '::1'].includes(host)) return true;
+  if (/^192\.168\./.test(host)) return true;
+  if (/^10\./.test(host)) return true;
   const match172 = host.match(/^172\.(\d+)\./);
   if (match172) {
     const second = Number(match172[1]);
     return second >= 16 && second <= 31;
   }
-
   return false;
 }
 
@@ -53,53 +45,10 @@ function isSnaillyInternalUrl(url, settings = {}) {
     const parsed = new URL(url);
     const backendOrigin = getBackendOrigin(settings);
     const path = parsed.pathname.toLowerCase();
-
-    const isSnaillyPath =
-      path.includes('/snailly') ||
-      path.includes('/api/snailly') ||
-      path.includes('/blocked');
-
-    if (!isSnaillyPath) {
-      return false;
-    }
-
-    // Kalau origin sama dengan backend, pasti halaman internal Snailly.
-    if (backendOrigin && parsed.origin === backendOrigin) {
-      return true;
-    }
-
-    // Untuk akses lokal/LAN seperti:
-    // localhost/snailly
-    // 127.0.0.1/snailly
-    // 192.168.x.x/snailly
+    const isSnaillyPath = path.includes('/snailly') || path.includes('/api/snailly') || path.includes('/blocked');
+    if (!isSnaillyPath) return false;
+    if (backendOrigin && parsed.origin === backendOrigin) return true;
     return isPrivateOrLocalHost(parsed.hostname);
-  } catch (_) {
-    return false;
-  }
-}
-function getBackendOrigin(settings) {
-  try {
-    return new URL(normalizeBase(settings.backendBase)).origin;
-  } catch (_) {
-    return '';
-  }
-}
-
-function isSnaillyInternalUrl(url, settings) {
-  try {
-    const parsed = new URL(url);
-    const backendOrigin = getBackendOrigin(settings);
-
-    if (!backendOrigin || parsed.origin !== backendOrigin) {
-      return false;
-    }
-
-    const path = parsed.pathname.toLowerCase();
-
-    return (
-      path.includes('/snailly') ||
-      path.includes('/api/snailly')
-    );
   } catch (_) {
     return false;
   }
@@ -109,23 +58,15 @@ function buildBlockedPageUrl(settings, targetUrl, policy = {}) {
   const base = normalizeBase(settings.backendBase)
     .replace(/\/snailly\/public$/i, '')
     .replace(/\/snailly$/i, '');
-
   const blockedPage = new URL(`${base}/snailly/blocked`);
-
   blockedPage.searchParams.set('url', targetUrl);
   blockedPage.searchParams.set('childId', settings.childId);
   blockedPage.searchParams.set('token', settings.token);
-
-  if (policy.category) {
-    blockedPage.searchParams.set('category', policy.category);
-  }
-
-  if (policy.reason) {
-    blockedPage.searchParams.set('reason', policy.reason);
-  }
-
+  if (policy.category) blockedPage.searchParams.set('category', policy.category);
+  if (policy.reason) blockedPage.searchParams.set('reason', policy.reason);
   return blockedPage.toString();
 }
+
 async function getSettings() {
   return new Promise((resolve) => {
     chrome.storage.local.get(DEFAULTS, (items) => {
@@ -139,7 +80,6 @@ async function reportTrackerStatus(settings, options = {}) {
 
   const force = Boolean(options.force);
   const now = Date.now();
-
   const statusKey = [
     normalizeBase(settings.backendBase),
     settings.childId,
@@ -147,9 +87,6 @@ async function reportTrackerStatus(settings, options = {}) {
     Boolean(settings.blockDangerous)
   ].join('|');
 
-  // Jangan update status terlalu sering.
-  // Status extension cukup dikirim maksimal 1x per 60 detik,
-  // kecuali memang dipaksa saat setting berubah.
   if (!force && statusKey === lastStatusReportKey && now - lastStatusReportAt < STATUS_REPORT_MIN_INTERVAL_MS) {
     return;
   }
@@ -206,13 +143,7 @@ async function setBadge() {
 
 function isTrackableUrl(url, settings) {
   if (!url || !/^https?:\/\//i.test(url)) return false;
-
-  // Jangan log halaman Snailly sendiri supaya activity_logs tidak penuh
-  // dengan dashboard, blocked page, API, public asset, dan halaman lokal Snailly.
-  if (isSnaillyInternalUrl(url, settings)) {
-    return false;
-  }
-
+  if (isSnaillyInternalUrl(url, settings)) return false;
   if (settings.ignoreLocalhost) {
     try {
       const host = new URL(url).hostname.toLowerCase();
@@ -221,7 +152,6 @@ function isTrackableUrl(url, settings) {
       return false;
     }
   }
-
   return true;
 }
 
@@ -229,57 +159,62 @@ function isRecentDuplicate(tabId, url) {
   const now = Date.now();
   const key = `${tabId}:${url}`;
   const last = recentByTab.get(key) || 0;
-  if (now - last < 30000) return true;
+  if (now - last < DUPLICATE_WINDOW_MS) return true;
   recentByTab.set(key, now);
-
-  // Keep the map from growing forever.
   for (const [itemKey, itemTime] of recentByTab.entries()) {
     if (now - itemTime > 120000) recentByTab.delete(itemKey);
   }
   return false;
 }
 
-async function trackTab(tab, reason = 'update') {
-  const settings = await getSettings();
+async function callBackend(settings, path, body) {
+  const endpoint = path.startsWith('/api/')
+    ? `${normalizeBase(settings.backendBase)}${path}`
+    : `${normalizeBase(settings.backendBase)}/api/snailly/proxy?path=${encodeURIComponent(path)}`;
 
-  if (!settings.enabled || !settings.token || !settings.childId) {
-    return { ok: false, skipped: true, message: 'Tracker disabled or not configured.' };
-  }
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Snailly-Authorization': `Bearer ${settings.token}`
+    },
+    body: JSON.stringify(body)
+  });
+
+  const text = await response.text();
+  let json = {};
+  try { json = text ? JSON.parse(text) : {}; }
+  catch (_) { json = { ok: false, message: text || 'Invalid response from backend.' }; }
+  if (!response.ok || json.ok === false) throw new Error(json.message || `Backend error ${response.status}`);
+  return json;
+}
+
+async function trackTab(tab, reason = 'tab_event') {
+  const settings = await getSettings();
+  await setBadge();
+
+  if (!settings.enabled) return { ok: false, skipped: true, message: 'Tracking disabled.' };
+  if (!settings.token || !settings.childId) return { ok: false, skipped: true, message: 'Extension is not configured.' };
 
   const url = tab?.url || '';
+  if (!isTrackableUrl(url, settings)) return { ok: true, skipped: true, message: 'Internal Snailly/local URL ignored.' };
 
-  if (!isTrackableUrl(url, settings)) {
-    return { ok: true, skipped: true, message: 'Internal Snailly URL ignored.' };
-  }
-  // Kalau mode blocking aktif, duplicate tetap dicek ulang ke backend,
-  // tetapi backend tidak akan menyimpan log baru dalam window duplicate pendek.
+  const policyOnly = reason === 'policy_recheck';
   if (!settings.blockDangerous && isRecentDuplicate(tab.id || 0, url)) {
     return { ok: true, skipped: true, message: 'Duplicate ignored.' };
   }
 
   try {
-    const response = await fetch(`${settings.backendBase}/api/snailly/track`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Snailly-Authorization': `Bearer ${settings.token}`
-      },
-      body: JSON.stringify({
-        childId: settings.childId,
-        url,
-        title: tab?.title || '',
-        source: `chrome_extension:${reason}`
-      })
-    });
+    const body = {
+      childId: settings.childId,
+      url,
+      title: tab?.title || '',
+      source: `chrome_extension:${reason}`
+    };
 
-    const text = await response.text();
-    let json = {};
-    try { json = text ? JSON.parse(text) : {}; }
-    catch (_) { json = { ok: false, message: text || 'Invalid response from backend.' }; }
-
-    if (!response.ok || json.ok === false) {
-      throw new Error(json.message || `Backend error ${response.status}`);
-    }
+    const json = policyOnly
+      ? await callBackend(settings, '/policy-check', body)
+      : await callBackend(settings, '/api/snailly/track', body);
 
     await chrome.storage.local.set({
       lastTracked: {
@@ -290,18 +225,14 @@ async function trackTab(tab, reason = 'update') {
         action: json.action || (json.blocked ? 'block' : 'allow'),
         blocked: json.blocked === true,
         duplicate: Boolean(json.duplicate),
+        policyOnly,
         category: json.category || '',
         reason: json.reason || ''
       },
       lastError: ''
     });
 
-    if (
-      settings.blockDangerous &&
-      json.blocked === true &&
-      tab?.id &&
-      !isSnaillyInternalUrl(url, settings)
-    ) {
+    if (settings.blockDangerous && json.blocked === true && tab?.id && !isSnaillyInternalUrl(url, settings)) {
       const blockUrl = buildBlockedPageUrl(settings, url, json);
       await chrome.tabs.update(tab.id, { url: blockUrl });
     }
@@ -314,9 +245,7 @@ async function trackTab(tab, reason = 'update') {
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete') {
-    trackTab({ ...tab, id: tabId }, 'page_complete');
-  }
+  if (changeInfo.status === 'complete') trackTab({ ...tab, id: tabId }, 'page_complete');
 });
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
@@ -354,19 +283,10 @@ if (chrome.alarms) chrome.alarms.onAlarm.addListener((alarm) => {
 });
 chrome.storage.onChanged.addListener(async (changes, areaName) => {
   if (areaName !== 'local') return;
-
   await setBadge();
-
-  // Jangan sync status setiap lastTracked / lastError berubah.
-  // Sync hanya kalau setting extension yang penting berubah.
   const statusKeys = ['enabled', 'blockDangerous', 'token', 'childId', 'backendBase'];
-  const shouldSyncStatus = statusKeys.some((key) =>
-    Object.prototype.hasOwnProperty.call(changes, key)
-  );
-
-  if (shouldSyncStatus) {
-    reportTrackerStatus(await getSettings(), { force: true });
-  }
+  const shouldSyncStatus = statusKeys.some((key) => Object.prototype.hasOwnProperty.call(changes, key));
+  if (shouldSyncStatus) reportTrackerStatus(await getSettings(), { force: true });
 });
 setBadge();
 ensurePolicyAlarm();
