@@ -53,33 +53,49 @@ Selain itu, Snailly juga memakai **Chrome Extension** untuk membaca URL yang sed
 - Chrome Extension Manifest V3
 - XAMPP untuk local server
 
-## Struktur Singkat Project
+## Struktur Project
 
 ```text
-snailly/
+snailly-antech-antech-async/
 ├── api/
+│   ├── blocklist.php
 │   ├── proxy.php
 │   └── track.php
 ├── assets/
 │   ├── css/
+│   │   └── style.css
+│   ├── img/
+│   │   └── logo.png
 │   └── js/
+│       └── app.js
 ├── config/
 │   └── database.php
+├── data/
+│   ├── list_website.txt
+│   └── trust_positif.txt
 ├── database/
 │   └── schema.sql
+├── docs/
+│   ├── CONVERSION_REPORT.md
+│   └── LOCAL_BACKEND_REPORT.md
 ├── extension/
-│   ├── manifest.json
 │   ├── background.js
-│   ├── popup.html
+│   ├── icon.png
+│   ├── manifest.json
 │   ├── popup.css
+│   ├── popup.html
 │   └── popup.js
 ├── lib/
+│   ├── Blocklist.php
 │   ├── Database.php
 │   ├── LocalBackend.php
 │   ├── PolicyEngine.php
 │   └── Security.php
+├── partials/
+│   └── sidebar.php
 ├── blocked.php
-└── index.php
+├── index.php
+└── README.md
 ```
 
 ## Cara Menjalankan di Lokal
