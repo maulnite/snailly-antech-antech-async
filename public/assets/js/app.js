@@ -31,9 +31,14 @@
   function setSelectedChild(id) { state.selectedChildId = id || ''; localStorage.setItem('snailly_selected_child_id', state.selectedChildId); }
   function setKidSession(child) {
     const safeChild = child ? { ...child } : null;
-    if (safeChild) delete safeChild.accessToken;
+
     state.kidSession = safeChild;
-    safeChild ? writeJSON('snailly_kid_session', safeChild) : localStorage.removeItem('snailly_kid_session');
+
+    if (safeChild) {
+      writeJSON('snailly_kid_session', safeChild);
+    } else {
+      localStorage.removeItem('snailly_kid_session');
+    }
   }
   function activeChild() {
     const id = state.kidSession?.id || state.selectedChildId || '';
@@ -421,44 +426,73 @@
   async function loadChildDashboard() {
     const root = document.getElementById('childDashboardContent');
     const greeting = document.getElementById('childDashboardGreeting');
+
     if (!root) return;
-    if (!state.user && !state.kidSession?.accessToken) {
-      root.innerHTML = `<div class="kid-panel kid-empty"><h2>Login anak dibutuhkan dulu</h2><p>Masuk pakai username dan password anak agar dashboard bisa membaca aktivitasmu sendiri.</p><a class="btn child-primary" href="?page=login-child" data-link="login-child">Login Kids</a></div>`;
+
+    if (!state.user && !state.kidSession?.id) {
+      root.innerHTML = `
+        <div class="kid-panel kid-empty">
+          <h2>Login anak dibutuhkan dulu</h2>
+          <p>Masuk pakai username dan password anak agar dashboard bisa membaca aktivitasmu sendiri.</p>
+          <a class="btn child-primary" href="?page=login-child" data-link="login-child">Login Kids</a>
+        </div>
+      `;
+
       if (greeting) greeting.textContent = 'Hi, Explorer! 👋';
       return;
     }
+
     if (state.user && !state.children?.length) {
-      try { await refreshChildren(); } catch (_) { /* handled below */ }
+      try {
+        await refreshChildren();
+      } catch (_) {}
     }
+
     const child = activeChild();
+
     if (!child?.id) {
-      root.innerHTML = `<div class="kid-panel kid-empty"><h2>Pilih profil anak dulu</h2><p>Masuk dari halaman Kids supaya dashboard ini tahu profil anak yang sedang aktif.</p><a class="btn child-primary" href="?page=login-child" data-link="login-child">Choose Child</a></div>`;
+      root.innerHTML = `
+        <div class="kid-panel kid-empty">
+          <h2>Pilih profil anak dulu</h2>
+          <p>Masuk dari halaman Kids supaya dashboard ini tahu profil anak yang sedang aktif.</p>
+          <a class="btn child-primary" href="?page=login-child" data-link="login-child">Choose Child</a>
+        </div>
+      `;
+
       if (greeting) greeting.textContent = 'Hi, Explorer! 👋';
       return;
     }
 
     setSelectedChild(child.id);
     setKidSession(child);
+
     if (greeting) greeting.textContent = `Hi, ${child.name}! 👋`;
+
     root.innerHTML = `<div class="kid-loading">Preparing your safe dashboard...</div>`;
 
     try {
       const now = new Date();
       const monthDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
       const [summaryResponse, logsResponse, monthResponse, trackerResponse] = await Promise.all([
         api(`/log/summary/${child.id}`, { auth: true }),
         api(`/log/${child.id}`, { auth: true, params: { page: 1, limit: 6, period: 'all' } }),
         api(`/log/statistic-month/${child.id}`, { auth: true, params: { date: monthDate } }),
         api(`/tracker-status/${child.id}`, { auth: true }).catch(() => ({ data: { enabled: false, blockDangerous: false } })),
       ]);
+
       const summary = normalizeResponse(summaryResponse) || {};
       const logs = normalizeResponse(logsResponse) || { items: [] };
       const monthStats = normalizeResponse(monthResponse) || [];
       const tracker = normalizeResponse(trackerResponse) || { enabled: false, blockDangerous: false };
+
       updateChildSafeMode(tracker);
+
       if (state.childStatusTimer) clearInterval(state.childStatusTimer);
+
       state.childStatusTimer = setInterval(async () => {
         if (currentPage() !== 'child-dashboard') return;
+
         try {
           const statusResponse = await api(`/tracker-status/${child.id}`, { auth: true });
           updateChildSafeMode(normalizeResponse(statusResponse) || { enabled: false });
@@ -466,7 +500,9 @@
           updateChildSafeMode({ enabled: false, blockDangerous: false });
         }
       }, 5000);
+
       root.innerHTML = childDashboardHTML(child, summary, logs.items || [], monthStats, tracker);
+
       root.querySelectorAll('[data-open-url]').forEach((cell) => {
         cell.addEventListener('click', () => {
           const url = cell.dataset.openUrl;
@@ -474,7 +510,13 @@
         });
       });
     } catch (error) {
-      root.innerHTML = `<div class="kid-panel kid-empty"><h2>Dashboard belum bisa dimuat</h2><p>${escapeHTML(messageFromError(error))}</p><a class="btn child-secondary" href="?page=login-child" data-link="login-child">Back</a></div>`;
+      root.innerHTML = `
+        <div class="kid-panel kid-empty">
+          <h2>Dashboard belum bisa dimuat</h2>
+          <p>${escapeHTML(messageFromError(error))}</p>
+          <a class="btn child-secondary" href="?page=login-child" data-link="login-child">Back</a>
+        </div>
+      `;
     }
   }
 
@@ -604,7 +646,7 @@
     const back = document.getElementById('childLogsBackButton');
     if (!root) return;
     const params = new URL(window.location.href).searchParams;
-    const childId = params.get('childId') || activeChild()?.id || '';
+    const childId = params.get('childId') || state.kidSession?.id || activeChild()?.id || '';
     const status = params.get('status') || 'all';
     const child = (state.children || []).find((c) => c.id === childId) || (state.kidSession?.id === childId ? state.kidSession : activeChild());
     if (back) back.onclick = () => go('child-dashboard');
@@ -612,7 +654,17 @@
       root.innerHTML = `<div class="kid-panel kid-empty"><h2>Login anak dibutuhkan dulu</h2><p>Masuk sebagai anak untuk melihat log milikmu.</p><a class="btn child-primary" href="?page=login-child" data-link="login-child">Login Kids</a></div>`;
       return;
     }
-    if (title) title.textContent = `${child.name}'s ${status === 'positive' ? 'Safe' : status === 'negative' ? 'Risky / Blocked' : 'Browsing'} Logs`;
+    if (title) {
+      title.textContent = `${child.name}'s ${
+        status === 'positive'
+          ? 'Safe'
+          : status === 'negative'
+            ? 'Risky / Blocked'
+            : status === 'warning'
+              ? 'Warning'
+              : 'Browsing'
+      } Logs`;
+    }    
     root.innerHTML = `<div class="kid-loading">Loading your logs...</div>`;
     try {
       const response = await api(`/log/${child.id}`, { auth: true, params: { page, limit: 12, period: 'all', status } });
@@ -1008,7 +1060,7 @@
     }
     if (statusSelect) {
       const status = params.get('status') || 'all';
-      statusSelect.value = ['all', 'positive', 'negative', 'pending'].includes(status) ? status : 'all';
+      statusSelect.value = ['all', 'positive', 'negative', 'warning', 'pending'].includes(status) ? status : 'all';
     }
     if (periodSelect) {
       const period = params.get('period') || periodSelect.value || 'daily';
