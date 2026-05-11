@@ -13,13 +13,15 @@ final class LocalBackend
 {
     private SnaillyDatabase $store;
     private array $db;
+    private string $requestPath;
 
-    public function __construct(?string $unusedLegacyDbFile = null)
+    public function __construct(?string $unusedLegacyDbFile = null, ?string $requestPath = null)
     {
         // Parameter lama dipertahankan supaya api/proxy.php tetap kompatibel.
         // Data sekarang disimpan di MySQL, bukan data/app_db.json.
         $this->store = new SnaillyDatabase();
-        $this->db = $this->loadDatabase();
+        $this->requestPath = '/' . trim((string)($requestPath ?? '/'), '/');
+        $this->db = $this->loadDatabase(!$this->canUseLiteSnapshot($this->requestPath));
     }
 
     public function handle(string $method, string $path, array $query, array $body, string $authHeader): array
@@ -48,6 +50,16 @@ final class LocalBackend
                 return $this->json(['data' => $publicChild]);
             }
             return $this->json(['data' => $this->publicUser($user)]);
+        }
+
+        if (preg_match('#^/dashboard/overview/([^/]+)$#', $path, $m) && $method === 'GET') {
+            $user = $this->requireUser($authHeader, ['parent', 'child']);
+            $this->assertChildScope($user, $m[1], true);
+            return $this->dashboardOverview($user, $m[1], $query);
+        }
+
+        if (($path === '/children/overview' || $path === '/children/overview/') && $method === 'GET') {
+            return $this->childrenOverview($this->requireUser($authHeader, ['parent']), $query);
         }
 
         if ($path === '/child' || $path === '/child/') {
@@ -580,65 +592,49 @@ final class LocalBackend
 
     private function logSummary(array $user, string $childId): array
     {
-        $logs = $this->logsFor($user['id'], $childId);
-        $safe = 0; $danger = 0; $categories = [];
-        foreach ($logs as $log) {
-            $cat = $this->categoryOf($log);
-            $categories[$cat] = ($categories[$cat] ?? 0) + 1;
-            if ($this->isSafe($log)) $safe++; else $danger++;
-        }
-        return $this->json(['data' => ['totalSafeWebsites' => $safe, 'totalDangerousWebsites' => $danger, 'categories' => $categories]]);
+        return $this->json(['data' => $this->store->logSummary((string)$user['id'], $childId)]);
     }
 
     private function listLogs(array $user, string $childId, array $query): array
     {
-        $page = max(1, (int)($query['page'] ?? 1));
-        $limit = max(1, min(100, (int)($query['limit'] ?? 10)));
-        $period = (string)($query['period'] ?? 'all');
-        $logs = $this->logsFor($user['id'], $childId);
-        $logs = $this->filterByPeriod($logs, $period, $query);
-
-        $status = strtolower((string)($query['status'] ?? 'all'));
-        $logs = $this->applyLogStatusFilter($logs, $status);
-        $category = trim((string)($query['category'] ?? ''));
-        if ($category !== '') $logs = array_values(array_filter($logs, fn($log) => strcasecmp($this->categoryOf($log), $category) === 0));
-        $logs = $this->applyLogSearch($logs, (string)($query['q'] ?? ''));
-
-        usort($logs, fn($a, $b) => strcmp((string)$b['createdAt'], (string)$a['createdAt']));
-        $total = count($logs);
-        $items = array_map(fn($log) => $this->decorateLog($log), array_slice($logs, ($page - 1) * $limit, $limit));
-        return $this->json(['data' => ['items' => $items, 'page' => $page, 'limit' => $limit, 'total' => $total, 'totalPage' => max(1, (int)ceil($total / $limit))]]);
+        return $this->json(['data' => $this->store->listLogs((string)$user['id'], $childId, $query)]);
     }
 
     private function statisticYear(array $user, string $childId, int $year): array
     {
-        $months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        $stats = [];
-        foreach ($months as $i => $name) $stats[$i + 1] = ['month' => $name, 'Good' => 0, 'Bad' => 0];
-        foreach ($this->logsFor($user['id'], $childId) as $log) {
-            $ts = strtotime((string)$log['createdAt']);
-            if ((int)date('Y', $ts) !== $year) continue;
-            $m = (int)date('n', $ts);
-            if ($this->isSafe($log)) $stats[$m]['Good']++; else $stats[$m]['Bad']++;
-        }
-        return $this->json(['data' => array_values($stats)]);
+        return $this->json(['data' => $this->store->statisticYear((string)$user['id'], $childId, $year)]);
     }
 
     private function statisticMonth(array $user, string $childId, string $date): array
     {
-        $parts = explode('-', $date);
-        $year = (int)($parts[0] ?? date('Y'));
-        $month = (int)($parts[1] ?? date('n'));
-        $days = cal_days_in_month(CAL_GREGORIAN, $month, $year);
-        $stats = [];
-        for ($d = 1; $d <= $days; $d++) $stats[$d] = ['month' => (string)$d, 'Good' => 0, 'Bad' => 0];
-        foreach ($this->logsFor($user['id'], $childId) as $log) {
-            $ts = strtotime((string)$log['createdAt']);
-            if ((int)date('Y', $ts) !== $year || (int)date('n', $ts) !== $month) continue;
-            $d = (int)date('j', $ts);
-            if ($this->isSafe($log)) $stats[$d]['Good']++; else $stats[$d]['Bad']++;
+        return $this->json(['data' => $this->store->statisticMonth((string)$user['id'], $childId, $date)]);
+    }
+
+    private function dashboardOverview(array $user, string $childId, array $query): array
+    {
+        $year = (int)($query['year'] ?? date('Y'));
+        $monthDate = (string)($query['date'] ?? date('Y-m'));
+        return $this->json(['data' => [
+            'summary' => $this->store->logSummary((string)$user['id'], $childId),
+            'logs' => $this->store->listLogs((string)$user['id'], $childId, ['page' => 1, 'limit' => (int)($query['limit'] ?? 5), 'period' => 'all']),
+            'yearStats' => $this->store->statisticYear((string)$user['id'], $childId, $year),
+            'monthStats' => $this->store->statisticMonth((string)$user['id'], $childId, $monthDate),
+        ]]);
+    }
+
+    private function childrenOverview(array $user, array $query): array
+    {
+        $monthDate = (string)($query['date'] ?? date('Y-m'));
+        $children = array_values(array_filter($this->db['children'], fn($c) => (string)$c['parentId'] === (string)$user['id']));
+        $summaries = [];
+        foreach ($children as $child) {
+            $childId = (string)$child['id'];
+            $summaries[$childId] = [
+                'summary' => $this->store->logSummary((string)$user['id'], $childId),
+                'monthStats' => $this->store->statisticMonth((string)$user['id'], $childId, $monthDate),
+            ];
         }
-        return $this->json(['data' => array_values($stats)]);
+        return $this->json(['data' => ['children' => array_map(fn($c) => $this->publicChild($c), $children), 'summaryMap' => $summaries]]);
     }
 
     private function grantAccess(array $user, string $logId, array $body): array
@@ -675,44 +671,14 @@ final class LocalBackend
 
     private function clearLogs(array $user, string $childId, array $query): array
     {
-        $logs = $this->logsFor($user['id'], $childId);
-        $logs = $this->filterByPeriod($logs, (string)($query['period'] ?? 'all'), $query);
-        $logs = $this->applyLogStatusFilter($logs, strtolower((string)($query['status'] ?? 'all')));
-        $category = trim((string)($query['category'] ?? ''));
-        if ($category !== '') $logs = array_values(array_filter($logs, fn($log) => strcasecmp($this->categoryOf($log), $category) === 0));
-        $logs = $this->applyLogSearch($logs, (string)($query['q'] ?? ''));
-        $idsToDelete = array_flip(array_map(fn($log) => (string)($log['log_id'] ?? ''), $logs));
-        if (!$idsToDelete) return $this->json(['message' => 'No logs matched the selected filter.', 'deleted' => 0]);
-        $before = count($this->db['logs']);
-        $this->db['logs'] = array_values(array_filter($this->db['logs'], fn($log) => !isset($idsToDelete[(string)($log['log_id'] ?? '')])));
-        $deleted = $before - count($this->db['logs']);
-        $this->save();
+        $deleted = $this->store->clearLogs((string)$user['id'], $childId, $query);
+        if ($deleted <= 0) return $this->json(['message' => 'No logs matched the selected filter.', 'deleted' => 0]);
         return $this->json(['message' => $deleted . ' log(s) deleted.', 'deleted' => $deleted]);
     }
 
     private function report(array $user, string $childId, array $query): array
     {
-        $period = (string)($query['period'] ?? 'daily');
-        $logs = $this->filterByPeriod($this->logsFor($user['id'], $childId), $period, $query);
-        $safe = 0; $danger = 0; $categories = []; $hosts = [];
-        foreach ($logs as $log) {
-            if ($this->isSafe($log)) $safe++; else $danger++;
-            $cat = $this->categoryOf($log);
-            $categories[$cat] = ($categories[$cat] ?? 0) + 1;
-            $host = $this->hostOf((string)($log['url'] ?? ''));
-            if ($host !== '') $hosts[$host] = ($hosts[$host] ?? 0) + 1;
-        }
-        arsort($categories); arsort($hosts);
-        return $this->json(['data' => [
-            'period' => $period,
-            'total' => count($logs),
-            'safe' => $safe,
-            'danger' => $danger,
-            'safePercent' => count($logs) ? round(($safe / count($logs)) * 100) : 100,
-            'categories' => $categories,
-            'topHosts' => array_slice($hosts, 0, 8, true),
-            'recent' => array_map(fn($log) => $this->decorateLog($log), array_slice(array_values($logs), 0, 10)),
-        ]]);
+        return $this->json(['data' => $this->store->report((string)$user['id'], $childId, $query)]);
     }
 
     private function updateProfile(array $user, string $id, array $body): array
@@ -1153,9 +1119,20 @@ final class LocalBackend
         return ['enabled' => (bool)($body['enabled'] ?? false), 'start' => $start, 'end' => $end, 'days' => $days];
     }
 
-    private function loadDatabase(): array
+    private function loadDatabase(bool $includeLogs = true): array
     {
-        return $this->store->loadSnapshot();
+        return $this->store->loadSnapshot($includeLogs);
+    }
+
+    private function canUseLiteSnapshot(string $path): bool
+    {
+        if ($path === '/children/overview' || str_starts_with($path, '/dashboard/overview/')) return true;
+        if (preg_match('#^/log/(summary|statistic-year|statistic-month)/#', $path)) return true;
+        if (preg_match('#^/log/[^/]+$#', $path)) return true;
+        if (preg_match('#^/report/[^/]+$#', $path)) return true;
+        if (preg_match('#^/tracker-status/[^/]+$#', $path)) return true;
+        if ($path === '/child' || $path === '/child/') return true;
+        return false;
     }
 
     private function emptyDb(): array

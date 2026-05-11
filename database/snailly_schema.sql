@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS rules (
   INDEX idx_rules_parent (parent_id),
   INDEX idx_rules_child (child_id),
   INDEX idx_rules_type (type),
+  INDEX idx_rules_parent_child_type (parent_id, child_id, type),
+  INDEX idx_rules_parent_match (parent_id, match_type),
   CONSTRAINT fk_rules_parent FOREIGN KEY (parent_id) REFERENCES parents(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -66,6 +68,9 @@ CREATE TABLE IF NOT EXISTS activity_logs (
   updated_at DATETIME NOT NULL,
   INDEX idx_logs_parent_child (parent_id, child_id),
   INDEX idx_logs_created (created_at),
+  INDEX idx_logs_parent_child_created (parent_id, child_id, created_at),
+  INDEX idx_logs_parent_created (parent_id, created_at),
+  INDEX idx_logs_parent_grant_created (parent_id, grant_access, created_at),
   CONSTRAINT fk_logs_parent FOREIGN KEY (parent_id) REFERENCES parents(id) ON DELETE CASCADE,
   CONSTRAINT fk_logs_child FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -83,6 +88,7 @@ CREATE TABLE IF NOT EXISTS access_requests (
   INDEX idx_requests_parent (parent_id),
   INDEX idx_requests_child (child_id),
   INDEX idx_requests_status (status),
+  INDEX idx_requests_parent_status_created (parent_id, status, created_at),
   CONSTRAINT fk_requests_parent FOREIGN KEY (parent_id) REFERENCES parents(id) ON DELETE CASCADE,
   CONSTRAINT fk_requests_child FOREIGN KEY (child_id) REFERENCES children(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

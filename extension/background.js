@@ -10,11 +10,122 @@ const DEFAULTS = {
 };
 
 const recentByTab = new Map();
-
+let lastStatusReportAt = 0;
+let lastStatusReportKey = '';
+const STATUS_REPORT_MIN_INTERVAL_MS = 60000;
 function normalizeBase(base) {
   return String(base || DEFAULTS.backendBase).replace(/\/+$/, '');
 }
+function isPrivateOrLocalHost(hostname) {
+  const host = String(hostname || '').toLowerCase();
 
+  if (['localhost', '127.0.0.1', '::1'].includes(host)) {
+    return true;
+  }
+
+  if (/^192\.168\./.test(host)) {
+    return true;
+  }
+
+  if (/^10\./.test(host)) {
+    return true;
+  }
+
+  const match172 = host.match(/^172\.(\d+)\./);
+  if (match172) {
+    const second = Number(match172[1]);
+    return second >= 16 && second <= 31;
+  }
+
+  return false;
+}
+
+function getBackendOrigin(settings) {
+  try {
+    return new URL(normalizeBase(settings.backendBase)).origin;
+  } catch (_) {
+    return '';
+  }
+}
+
+function isSnaillyInternalUrl(url, settings = {}) {
+  try {
+    const parsed = new URL(url);
+    const backendOrigin = getBackendOrigin(settings);
+    const path = parsed.pathname.toLowerCase();
+
+    const isSnaillyPath =
+      path.includes('/snailly') ||
+      path.includes('/api/snailly') ||
+      path.includes('/blocked');
+
+    if (!isSnaillyPath) {
+      return false;
+    }
+
+    // Kalau origin sama dengan backend, pasti halaman internal Snailly.
+    if (backendOrigin && parsed.origin === backendOrigin) {
+      return true;
+    }
+
+    // Untuk akses lokal/LAN seperti:
+    // localhost/snailly
+    // 127.0.0.1/snailly
+    // 192.168.x.x/snailly
+    return isPrivateOrLocalHost(parsed.hostname);
+  } catch (_) {
+    return false;
+  }
+}
+function getBackendOrigin(settings) {
+  try {
+    return new URL(normalizeBase(settings.backendBase)).origin;
+  } catch (_) {
+    return '';
+  }
+}
+
+function isSnaillyInternalUrl(url, settings) {
+  try {
+    const parsed = new URL(url);
+    const backendOrigin = getBackendOrigin(settings);
+
+    if (!backendOrigin || parsed.origin !== backendOrigin) {
+      return false;
+    }
+
+    const path = parsed.pathname.toLowerCase();
+
+    return (
+      path.includes('/snailly') ||
+      path.includes('/api/snailly')
+    );
+  } catch (_) {
+    return false;
+  }
+}
+
+function buildBlockedPageUrl(settings, targetUrl, policy = {}) {
+  const base = normalizeBase(settings.backendBase)
+    .replace(/\/snailly\/public$/i, '')
+    .replace(/\/snailly$/i, '');
+
+  const blockedPage = new URL(`${base}/snailly/blocked`);
+
+  blockedPage.searchParams.set('url', targetUrl);
+  blockedPage.searchParams.set('childId', settings.childId);
+  blockedPage.searchParams.set('token', settings.token);
+
+  if (policy.category) {
+    blockedPage.searchParams.set('category', policy.category);
+  }
+
+  if (policy.reason) {
+    blockedPage.searchParams.set('reason', policy.reason);
+  }
+
+  return blockedPage.toString();
+}
 async function getSettings() {
   return new Promise((resolve) => {
     chrome.storage.local.get(DEFAULTS, (items) => {
@@ -23,8 +134,29 @@ async function getSettings() {
   });
 }
 
-async function reportTrackerStatus(settings) {
+async function reportTrackerStatus(settings, options = {}) {
   if (!settings?.token || !settings?.childId) return;
+
+  const force = Boolean(options.force);
+  const now = Date.now();
+
+  const statusKey = [
+    normalizeBase(settings.backendBase),
+    settings.childId,
+    Boolean(settings.enabled),
+    Boolean(settings.blockDangerous)
+  ].join('|');
+
+  // Jangan update status terlalu sering.
+  // Status extension cukup dikirim maksimal 1x per 60 detik,
+  // kecuali memang dipaksa saat setting berubah.
+  if (!force && statusKey === lastStatusReportKey && now - lastStatusReportAt < STATUS_REPORT_MIN_INTERVAL_MS) {
+    return;
+  }
+
+  lastStatusReportKey = statusKey;
+  lastStatusReportAt = now;
+
   try {
     await fetch(`${normalizeBase(settings.backendBase)}/api/snailly/proxy?path=${encodeURIComponent(`/tracker-status/${settings.childId}`)}`, {
       method: 'PUT',
@@ -74,6 +206,13 @@ async function setBadge() {
 
 function isTrackableUrl(url, settings) {
   if (!url || !/^https?:\/\//i.test(url)) return false;
+
+  // Jangan log halaman Snailly sendiri supaya activity_logs tidak penuh
+  // dengan dashboard, blocked page, API, public asset, dan halaman lokal Snailly.
+  if (isSnaillyInternalUrl(url, settings)) {
+    return false;
+  }
+
   if (settings.ignoreLocalhost) {
     try {
       const host = new URL(url).hostname.toLowerCase();
@@ -82,6 +221,7 @@ function isTrackableUrl(url, settings) {
       return false;
     }
   }
+
   return true;
 }
 
@@ -99,19 +239,21 @@ function isRecentDuplicate(tabId, url) {
   return false;
 }
 
-async function trackTab(tab, reason = 'tab_event') {
+async function trackTab(tab, reason = 'update') {
   const settings = await getSettings();
-  await setBadge();
 
-  if (!settings.enabled) return { ok: false, skipped: true, message: 'Tracking disabled.' };
-  if (!settings.token || !settings.childId) return { ok: false, skipped: true, message: 'Extension is not configured.' };
+  if (!settings.enabled || !settings.token || !settings.childId) {
+    return { ok: false, skipped: true, message: 'Tracker disabled or not configured.' };
+  }
 
   const url = tab?.url || '';
-  if (!isTrackableUrl(url, settings)) return { ok: false, skipped: true, message: 'URL ignored.' };
-  // Kalau mode blocking aktif, jangan skip duplicate.
-  // Alasannya: parent bisa saja baru saja menekan lock pada URL yang sama,
-  // sehingga extension perlu tanya backend lagi agar bisa redirect ke blocked page.
-  if (isRecentDuplicate(tab.id || 0, url)) {
+
+  if (!isTrackableUrl(url, settings)) {
+    return { ok: true, skipped: true, message: 'Internal Snailly URL ignored.' };
+  }
+  // Kalau mode blocking aktif, duplicate tetap dicek ulang ke backend,
+  // tetapi backend tidak akan menyimpan log baru dalam window duplicate pendek.
+  if (!settings.blockDangerous && isRecentDuplicate(tab.id || 0, url)) {
     return { ok: true, skipped: true, message: 'Duplicate ignored.' };
   }
 
@@ -154,8 +296,13 @@ async function trackTab(tab, reason = 'tab_event') {
       lastError: ''
     });
 
-    if (settings.blockDangerous && json.blocked === true && tab?.id) {
-      const blockUrl = `${settings.backendBase}/snailly/blocked?url=${encodeURIComponent(url)}&childId=${encodeURIComponent(settings.childId)}&token=${encodeURIComponent(settings.token)}&category=${encodeURIComponent(json.category || '')}&reason=${encodeURIComponent(json.reason || '')}`;
+    if (
+      settings.blockDangerous &&
+      json.blocked === true &&
+      tab?.id &&
+      !isSnaillyInternalUrl(url, settings)
+    ) {
+      const blockUrl = buildBlockedPageUrl(settings, url, json);
       await chrome.tabs.update(tab.id, { url: blockUrl });
     }
 
@@ -192,7 +339,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === 'syncStatus') {
-    getSettings().then((settings) => reportTrackerStatus(settings)).then(() => sendResponse({ ok: true }));
+    getSettings()
+      .then((settings) => reportTrackerStatus(settings, { force: true }))
+      .then(() => sendResponse({ ok: true }));
     return true;
   }
   return false;
@@ -203,9 +352,21 @@ chrome.runtime.onStartup.addListener(() => { setBadge(); ensurePolicyAlarm(); })
 if (chrome.alarms) chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'snaillyPolicyRecheck') recheckActiveTabs();
 });
-chrome.storage.onChanged.addListener(async () => {
+chrome.storage.onChanged.addListener(async (changes, areaName) => {
+  if (areaName !== 'local') return;
+
   await setBadge();
-  reportTrackerStatus(await getSettings());
+
+  // Jangan sync status setiap lastTracked / lastError berubah.
+  // Sync hanya kalau setting extension yang penting berubah.
+  const statusKeys = ['enabled', 'blockDangerous', 'token', 'childId', 'backendBase'];
+  const shouldSyncStatus = statusKeys.some((key) =>
+    Object.prototype.hasOwnProperty.call(changes, key)
+  );
+
+  if (shouldSyncStatus) {
+    reportTrackerStatus(await getSettings(), { force: true });
+  }
 });
 setBadge();
 ensurePolicyAlarm();

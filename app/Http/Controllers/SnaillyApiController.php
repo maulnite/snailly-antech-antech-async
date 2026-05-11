@@ -40,7 +40,7 @@ class SnaillyApiController extends Controller
                 }
             }
 
-            $backend = new \LocalBackend();
+            $backend = new \LocalBackend(null, $path);
             $result = $backend->handle($method, $path, $query, $body, $authHeader);
 
             $normPath = '/' . trim($path, '/');

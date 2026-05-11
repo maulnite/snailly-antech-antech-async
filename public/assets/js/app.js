@@ -23,7 +23,17 @@
   function writeJSON(key, value) { localStorage.setItem(key, JSON.stringify(value)); }
   function setUser(user) {
     const safeUser = user ? { ...user } : null;
-    if (safeUser) delete safeUser.accessToken;
+
+    if (safeUser?.accessToken) {
+      localStorage.setItem('snailly_parent_token', safeUser.accessToken);
+    } else if (!safeUser) {
+      localStorage.removeItem('snailly_parent_token');
+    }
+
+    if (safeUser) {
+      delete safeUser.accessToken;
+    }
+
     state.user = safeUser;
     safeUser ? writeJSON('snailly_user', safeUser) : localStorage.removeItem('snailly_user');
   }
@@ -44,7 +54,9 @@
     const id = state.kidSession?.id || state.selectedChildId || '';
     return (state.children || []).find((child) => child.id === id) || state.kidSession || null;
   }
-  function token() { return state.user?.accessToken || ''; }
+  function token() {
+    return state.user?.accessToken || localStorage.getItem('snailly_parent_token') || '';
+  } 
   function kidToken() { return state.kidSession?.accessToken || ''; }
   function activeAuthToken() { return token() || kidToken(); }
   function escapeHTML(value) {
@@ -233,21 +245,26 @@
   }
 
   async function logout() {
-    try { await api('/auth/logout', { method: 'POST', auth: false }); } catch (_) {}
+    try {
+      await api('/auth/logout', { method: 'POST', auth: false });
+    } catch (_) {}
+
     localStorage.removeItem('snailly_user');
+    localStorage.removeItem('snailly_parent_token'); // tambahan penting
     localStorage.removeItem('snailly_children');
     localStorage.removeItem('snailly_selected_child_id');
     localStorage.removeItem('snailly_current_user');
     localStorage.removeItem('snailly_kid_session');
+
     state.user = null;
     state.children = [];
     state.selectedChildId = '';
     state.currentUser = null;
     state.kidSession = null;
+
     toast('Logged out.', 'success');
     go('home');
   }
-
   async function childLogout() {
     try { await api('/auth/logout', { method: 'POST', auth: false }); } catch (_) {}
     setKidSession(null);
@@ -722,16 +739,15 @@
       const now = new Date();
       const year = now.getFullYear();
       const monthDate = `${year}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      const [summaryResponse, logsResponse, yearResponse, monthResponse] = await Promise.all([
-        api(`/log/summary/${childId}`, { auth: true }),
-        api(`/log/${childId}`, { auth: true, params: { page: 1, limit: 5 } }),
-        api(`/log/statistic-year/${childId}`, { auth: true, params: { year } }),
-        api(`/log/statistic-month/${childId}`, { auth: true, params: { date: monthDate } }),
-      ]);
-      const summary = normalizeResponse(summaryResponse) || {};
-      const logs = normalizeResponse(logsResponse) || { items: [] };
-      const yearStats = normalizeResponse(yearResponse) || [];
-      const monthStats = normalizeResponse(monthResponse) || [];
+      const overviewResponse = await api(`/dashboard/overview/${childId}`, {
+        auth: true,
+        params: { year, date: monthDate, limit: 5 },
+      });
+      const overview = normalizeResponse(overviewResponse) || {};
+      const summary = overview.summary || {};
+      const logs = overview.logs || { items: [] };
+      const yearStats = overview.yearStats || [];
+      const monthStats = overview.monthStats || [];
       root.innerHTML = dashboardHTML(summary, logs, yearStats, monthStats);
       bindGrantButtons(root, () => loadDashboard());
     } catch (error) {
@@ -897,17 +913,14 @@
     const root = document.getElementById('childrenContent');
     root.innerHTML = `<div class="loading">Loading children...</div>`;
     try {
-      const children = await refreshChildren();
-      const summaryPairs = await Promise.all((children || []).map(async (child) => {
-        try {
-          const summaryResponse = await api(`/log/summary/${child.id}`, { auth: true });
-          const monthResponse = await api(`/log/statistic-month/${child.id}`, { auth: true, params: { date: new Date().toISOString().slice(0, 7) } });
-          return [child.id, { summary: normalizeResponse(summaryResponse) || {}, monthStats: normalizeResponse(monthResponse) || [] }];
-        } catch (_) {
-          return [child.id, { summary: {}, monthStats: [] }];
-        }
-      }));
-      const summaryMap = Object.fromEntries(summaryPairs);
+      const overviewResponse = await api('/children/overview', {
+        auth: true,
+        params: { date: new Date().toISOString().slice(0, 7) },
+      });
+      const overview = normalizeResponse(overviewResponse) || {};
+      const children = overview.children || [];
+      setChildren(children);
+      const summaryMap = overview.summaryMap || {};
       root.innerHTML = childrenHTML(children, summaryMap);
       root.querySelectorAll('[data-edit-child]').forEach((button) => {
         button.addEventListener('click', () => openChildModal('edit', button.dataset.editChild, button.dataset.name, button.dataset.username || ''));
@@ -1763,7 +1776,34 @@
 
   function renderBlocked() {
     const params = new URL(window.location.href).searchParams;
-    const url = params.get('url') || '';
+
+    function unwrapBlockedUrl(value) {
+      let current = String(value || '');
+
+      for (let i = 0; i < 5; i++) {
+        try {
+          const parsed = new URL(current);
+
+          if (!parsed.pathname.toLowerCase().includes('/snailly/blocked')) {
+            break;
+          }
+
+          const next = parsed.searchParams.get('url');
+
+          if (!next || next === current) {
+            break;
+          }
+
+          current = next;
+        } catch (_) {
+          break;
+        }
+      }
+
+      return current;
+    }
+
+    const url = unwrapBlockedUrl(params.get('url') || '');
     const reason = params.get('reason') || params.get('category') || '';
     const childId = params.get('childId') || '';
     const requestToken = params.get('token') || '';

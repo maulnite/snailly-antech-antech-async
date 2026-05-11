@@ -40,11 +40,43 @@ function snailly_load_list(string $file): array
 
 function snailly_combined_blocklist(): array
 {
-    $base = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR;
-    return array_values(array_unique(array_merge(
-        snailly_load_list($base . 'list_website.txt'),
-        snailly_load_list($base . 'trust_positif.txt')
+    static $items = null;
+    if ($items !== null) {
+        return $items;
+    }
+
+    $base = function_exists('base_path')
+        ? base_path('data') . DIRECTORY_SEPARATOR
+        : dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'data' . DIRECTORY_SEPARATOR;
+
+    $cacheFile = function_exists('storage_path')
+        ? storage_path('framework/cache/snailly_blocklist_lookup.php')
+        : sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'snailly_blocklist_lookup.php';
+
+    $sources = [$base . 'list_website.txt', $base . 'trust_positif.txt'];
+    $latestSourceMtime = 0;
+    foreach ($sources as $source) {
+        if (is_file($source)) $latestSourceMtime = max($latestSourceMtime, (int)filemtime($source));
+    }
+
+    if (is_file($cacheFile) && (int)filemtime($cacheFile) >= $latestSourceMtime) {
+        $cached = require $cacheFile;
+        if (is_array($cached)) {
+            return $items = $cached;
+        }
+    }
+
+    $items = array_values(array_unique(array_merge(
+        snailly_load_list($sources[0]),
+        snailly_load_list($sources[1])
     )));
+
+    $dir = dirname($cacheFile);
+    if (is_dir($dir) && is_writable($dir)) {
+        file_put_contents($cacheFile, '<?php return ' . var_export($items, true) . ';');
+    }
+
+    return $items;
 }
 
 function snailly_is_blocked(string $url): bool

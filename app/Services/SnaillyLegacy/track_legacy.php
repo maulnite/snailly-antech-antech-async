@@ -44,7 +44,7 @@ try {
     if ($child === null) respondAndUnlock($fp, ['ok' => false, 'message' => 'Child not found. Create/select a child first.'], 404);
 
     $now = date(DATE_ATOM);
-    $duplicate = recentDuplicate($db, $userId, (string)$child['id'], $url, 12);
+    $duplicate = $dbStore->recentDuplicateLog($userId, (string)$child['id'], $url, 12);
     if ($duplicate !== null) {
         // Duplicate logs are not saved again, but the policy is still rechecked.
         // This fixes cases where parent just deleted/changed a rule while the same tab is still open.
@@ -62,6 +62,7 @@ try {
             'reason' => $classification['reason'],
             'score' => $classification['score'],
         ]];
+        $dbStore->updateLogClassification((string)$duplicate['log_id'], !$blocked, $duplicate['classified_url']);
 
         respondAndUnlock($fp, [
             'ok' => true,
@@ -104,8 +105,7 @@ try {
         'createdAt' => $now,
         'updatedAt' => $now,
     ];
-    $db['logs'][] = $log;
-    saveDbLocked($dbStore, $db, $fp);
+    $dbStore->insertLog($log);
 
 
     respond([
@@ -127,7 +127,7 @@ try {
 }
 
 function emptyDb(): array { return ['users'=>[], 'tokens'=>[], 'children'=>[], 'logs'=>[], 'rules'=>[], 'accessRequests'=>[], 'trackerStatus'=>[]]; }
-function loadDbLocked(SnaillyDatabase $store): array { return [$store->loadSnapshot(), $store]; }
+function loadDbLocked(SnaillyDatabase $store): array { return [$store->loadSnapshot(false), $store]; }
 function saveDbLocked(SnaillyDatabase $store, array $db, $fp): void { $store->saveSnapshot($db); }
 function respondAndUnlock($fp, array $payload, int $status=200): void { respond($payload,$status); }
 function respond(array $payload, int $status=200): void { http_response_code($status); echo json_encode($payload, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE); exit; }

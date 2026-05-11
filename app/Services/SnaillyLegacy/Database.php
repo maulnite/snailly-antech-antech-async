@@ -40,7 +40,12 @@ final class SnaillyDatabase
             PDO::ATTR_EMULATE_PREPARES => false,
         ]);
 
-        $this->migrate();
+        // Jangan jalankan migrasi penuh di setiap request.
+        // Default-nya hanya migrate jika tabel utama belum ada; ini jauh lebih ringan
+        // untuk dashboard dan extension yang sering memanggil API.
+        if ($this->shouldMigrate()) {
+            $this->migrate();
+        }
     }
 
     public function pdo(): PDO
@@ -48,37 +53,46 @@ final class SnaillyDatabase
         return $this->pdo;
     }
 
-    public function loadSnapshot(): array
+    public function loadSnapshot(bool $includeLogs = true): array
     {
         return [
             'users' => $this->loadUsers(),
             'tokens' => $this->loadTokens(),
             'children' => $this->loadChildren(),
-            'logs' => $this->loadLogs(),
+            'logs' => $includeLogs ? $this->loadLogs() : [],
             'rules' => $this->loadRules(),
             'accessRequests' => $this->loadAccessRequests(),
             'trackerStatus' => $this->loadTrackerStatus(),
+            '_partialLogs' => !$includeLogs,
         ];
     }
 
     public function saveSnapshot(array $db): void
     {
         $db = array_merge($this->emptySnapshot(), $db);
+        $partialLogs = !empty($db['_partialLogs']);
         $this->pdo->beginTransaction();
         try {
-            $this->pdo->exec('SET FOREIGN_KEY_CHECKS=0');
-            foreach (['tracker_status', 'access_requests', 'activity_logs', 'rules', 'tokens', 'children', 'parents'] as $table) {
-                $this->pdo->exec("DELETE FROM {$table}");
-            }
-            $this->pdo->exec('SET FOREIGN_KEY_CHECKS=1');
-
+            // Upsert hanya baris yang berubah. Ini mengganti pola lama yang menghapus
+            // semua tabel lalu insert ulang, yang sangat berat saat log sudah banyak.
             $this->saveUsers($db['users']);
             $this->saveChildren($db['children']);
             $this->saveTokens($db['tokens']);
             $this->saveRules($db['rules']);
-            $this->saveLogs($db['logs']);
+            if (!$partialLogs) {
+                $this->saveLogs($db['logs']);
+            }
             $this->saveAccessRequests($db['accessRequests']);
             $this->saveTrackerStatus($db['trackerStatus'] ?? []);
+
+            $this->deleteMissing('tokens', 'token', array_keys($db['tokens']));
+            $this->deleteMissing('rules', 'id', array_map(fn($r) => (string)($r['id'] ?? ''), $db['rules']));
+            $this->deleteMissing('access_requests', 'id', array_map(fn($r) => (string)($r['id'] ?? ''), $db['accessRequests']));
+            $this->deleteMissing('tracker_status', 'child_id', array_map(fn($s, $k) => (string)($s['childId'] ?? $k), $db['trackerStatus'] ?? [], array_keys($db['trackerStatus'] ?? [])));
+            if (!$partialLogs) {
+                $this->deleteMissing('activity_logs', 'log_id', array_map(fn($l) => (string)($l['log_id'] ?? ''), $db['logs']));
+            }
+            $this->deleteMissing('children', 'id', array_map(fn($c) => (string)($c['id'] ?? ''), $db['children']));
 
             $this->pdo->commit();
         } catch (Throwable $e) {
@@ -89,7 +103,7 @@ final class SnaillyDatabase
 
     public function emptySnapshot(): array
     {
-        return ['users' => [], 'tokens' => [], 'children' => [], 'logs' => [], 'rules' => [], 'accessRequests' => [], 'trackerStatus' => []];
+        return ['users' => [], 'tokens' => [], 'children' => [], 'logs' => [], 'rules' => [], 'accessRequests' => [], 'trackerStatus' => [], '_partialLogs' => false];
     }
 
     private function loadConfig(): array
@@ -121,6 +135,30 @@ final class SnaillyDatabase
         $name = preg_replace('/[^a-zA-Z0-9_]/', '', $name) ?? '';
         if ($name === '') $name = 'snailly_kids';
         return $name;
+    }
+
+    private function shouldMigrate(): bool
+    {
+        $mode = 'missing_only';
+        if (function_exists('env')) {
+            $mode = strtolower((string) env('SNAILLY_AUTO_MIGRATE', 'missing_only'));
+        }
+
+        if (in_array($mode, ['1', 'true', 'yes', 'always'], true)) {
+            return true;
+        }
+
+        if (in_array($mode, ['0', 'false', 'no', 'never', 'off'], true)) {
+            return false;
+        }
+
+        try {
+            $stmt = $this->pdo->prepare("SHOW TABLES LIKE 'parents'");
+            $stmt->execute();
+            return $stmt->fetchColumn() === false;
+        } catch (Throwable $e) {
+            return true;
+        }
     }
 
     private function migrate(): void
@@ -285,7 +323,7 @@ final class SnaillyDatabase
 
     private function saveUsers(array $users): void
     {
-        $stmt = $this->pdo->prepare('INSERT INTO parents (id, name, email, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
+        $stmt = $this->pdo->prepare('INSERT INTO parents (id, name, email, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name), email = VALUES(email), password_hash = VALUES(password_hash), updated_at = VALUES(updated_at)');
         foreach ($users as $u) {
             $stmt->execute([
                 (string)$u['id'], (string)$u['name'], (string)$u['email'], (string)$u['passwordHash'],
@@ -296,7 +334,7 @@ final class SnaillyDatabase
 
     private function saveChildren(array $children): void
     {
-        $stmt = $this->pdo->prepare('INSERT INTO children (id, parent_id, name, username, password_hash, schedule_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+        $stmt = $this->pdo->prepare('INSERT INTO children (id, parent_id, name, username, password_hash, schedule_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE parent_id = VALUES(parent_id), name = VALUES(name), username = VALUES(username), password_hash = VALUES(password_hash), schedule_json = VALUES(schedule_json), updated_at = VALUES(updated_at)');
         foreach ($children as $c) {
             $stmt->execute([
                 (string)$c['id'], (string)$c['parentId'], (string)$c['name'], (string)($c['username'] ?? ''), (string)($c['passwordHash'] ?? ''),
@@ -307,7 +345,7 @@ final class SnaillyDatabase
 
     private function saveTokens(array $tokens): void
     {
-        $stmt = $this->pdo->prepare('INSERT INTO tokens (token, user_id, child_id, role, created_at, expires_at, last_used_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+        $stmt = $this->pdo->prepare('INSERT INTO tokens (token, user_id, child_id, role, created_at, expires_at, last_used_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE user_id = VALUES(user_id), child_id = VALUES(child_id), role = VALUES(role), expires_at = VALUES(expires_at), last_used_at = VALUES(last_used_at), revoked_at = VALUES(revoked_at)');
         foreach ($tokens as $token => $session) {
             $stmt->execute([
                 (string)$token,
@@ -324,7 +362,7 @@ final class SnaillyDatabase
 
     private function saveRules(array $rules): void
     {
-        $stmt = $this->pdo->prepare('INSERT INTO rules (id, parent_id, child_id, type, match_type, pattern, category, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        $stmt = $this->pdo->prepare('INSERT INTO rules (id, parent_id, child_id, type, match_type, pattern, category, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE parent_id = VALUES(parent_id), child_id = VALUES(child_id), type = VALUES(type), match_type = VALUES(match_type), pattern = VALUES(pattern), category = VALUES(category), updated_at = VALUES(updated_at)');
         foreach ($rules as $r) {
             $stmt->execute([
                 (string)$r['id'], (string)$r['parentId'], (string)($r['childId'] ?? 'ALL'), (string)$r['type'], (string)($r['matchType'] ?? 'domain'),
@@ -335,7 +373,7 @@ final class SnaillyDatabase
 
     private function saveLogs(array $logs): void
     {
-        $stmt = $this->pdo->prepare('INSERT INTO activity_logs (log_id, child_id, parent_id, url, web_title, web_description, detail_url, grant_access, classified_url_json, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        $stmt = $this->pdo->prepare('INSERT INTO activity_logs (log_id, child_id, parent_id, url, web_title, web_description, detail_url, grant_access, classified_url_json, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE child_id = VALUES(child_id), parent_id = VALUES(parent_id), url = VALUES(url), web_title = VALUES(web_title), web_description = VALUES(web_description), detail_url = VALUES(detail_url), grant_access = VALUES(grant_access), classified_url_json = VALUES(classified_url_json), source = VALUES(source), updated_at = VALUES(updated_at)');
         foreach ($logs as $l) {
             $stmt->execute([
                 (string)$l['log_id'], (string)$l['child_id'], (string)$l['parentId'], (string)$l['url'], (string)($l['web_title'] ?? ''),
@@ -348,7 +386,7 @@ final class SnaillyDatabase
 
     private function saveAccessRequests(array $requests): void
     {
-        $stmt = $this->pdo->prepare('INSERT INTO access_requests (id, parent_id, child_id, url, host, reason, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        $stmt = $this->pdo->prepare('INSERT INTO access_requests (id, parent_id, child_id, url, host, reason, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE parent_id = VALUES(parent_id), child_id = VALUES(child_id), url = VALUES(url), host = VALUES(host), reason = VALUES(reason), status = VALUES(status), updated_at = VALUES(updated_at)');
         foreach ($requests as $r) {
             $stmt->execute([
                 (string)$r['id'], (string)$r['parentId'], (string)$r['childId'], (string)$r['url'], (string)($r['host'] ?? ''),
@@ -359,7 +397,7 @@ final class SnaillyDatabase
 
     private function saveTrackerStatus(array $items): void
     {
-        $stmt = $this->pdo->prepare('INSERT INTO tracker_status (child_id, parent_id, enabled, block_dangerous, last_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
+        $stmt = $this->pdo->prepare('INSERT INTO tracker_status (child_id, parent_id, enabled, block_dangerous, last_seen_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE parent_id = VALUES(parent_id), enabled = VALUES(enabled), block_dangerous = VALUES(block_dangerous), last_seen_at = VALUES(last_seen_at), updated_at = VALUES(updated_at)');
         foreach ($items as $key => $s) {
             $childId = (string)($s['childId'] ?? $key);
             if ($childId === '') continue;
@@ -372,6 +410,322 @@ final class SnaillyDatabase
                 $this->sqlDate($s['updatedAt'] ?? null),
             ]);
         }
+    }
+
+    private function deleteMissing(string $table, string $pk, array $ids): void
+    {
+        $ids = array_values(array_filter(array_unique(array_map('strval', $ids)), fn($id) => $id !== ''));
+        if (!$ids) {
+            $this->pdo->exec("DELETE FROM {$table}");
+            return;
+        }
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $this->pdo->prepare("DELETE FROM {$table} WHERE {$pk} NOT IN ({$placeholders})");
+        $stmt->execute($ids);
+    }
+
+    public function insertLog(array $log): void
+    {
+        $stmt = $this->pdo->prepare('INSERT INTO activity_logs (log_id, child_id, parent_id, url, web_title, web_description, detail_url, grant_access, classified_url_json, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE child_id = VALUES(child_id), parent_id = VALUES(parent_id), url = VALUES(url), web_title = VALUES(web_title), web_description = VALUES(web_description), detail_url = VALUES(detail_url), grant_access = VALUES(grant_access), classified_url_json = VALUES(classified_url_json), source = VALUES(source), updated_at = VALUES(updated_at)');
+        $stmt->execute([
+            (string)$log['log_id'],
+            (string)$log['child_id'],
+            (string)$log['parentId'],
+            (string)$log['url'],
+            (string)($log['web_title'] ?? ''),
+            (string)($log['web_description'] ?? ''),
+            (string)($log['detail_url'] ?? $log['url'] ?? ''),
+            $this->boolToDb($log['grant_access'] ?? null),
+            $this->jsonEncode($log['classified_url'] ?? []),
+            (string)($log['source'] ?? 'extension'),
+            $this->sqlDate($log['createdAt'] ?? null),
+            $this->sqlDate($log['updatedAt'] ?? null),
+        ]);
+    }
+
+    public function recentDuplicateLog(string $parentId, string $childId, string $url, int $seconds = 12): ?array
+    {
+        $stmt = $this->pdo->prepare('SELECT * FROM activity_logs WHERE parent_id = ? AND child_id = ? AND url = ? AND created_at >= DATE_SUB(NOW(), INTERVAL ? SECOND) ORDER BY created_at DESC LIMIT 1');
+        $stmt->execute([$parentId, $childId, $url, max(1, $seconds)]);
+        $row = $stmt->fetch();
+        return $row ? $this->mapLogRow($row) : null;
+    }
+
+    public function updateLogClassification(string $logId, bool $grantAccess, array $classifiedUrl): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE activity_logs SET grant_access = ?, classified_url_json = ?, updated_at = NOW() WHERE log_id = ?');
+        $stmt->execute([$grantAccess ? 1 : 0, $this->jsonEncode($classifiedUrl), $logId]);
+    }
+
+    public function logSummary(string $parentId, string $childId): array
+    {
+        [$where, $params] = $this->logWhere($parentId, $childId);
+        $sql = "SELECT grant_access, classified_url_json, COUNT(*) AS total FROM activity_logs {$where} GROUP BY grant_access, classified_url_json";
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        $safe = 0;
+        $danger = 0;
+        $categories = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $count = (int)($row['total'] ?? 0);
+            $classification = $this->firstClassification($row['classified_url_json'] ?? null);
+            $category = (string)($classification['category'] ?? (((int)($row['grant_access'] ?? 1) === 1) ? 'Safe' : 'Risky'));
+            $categories[$category] = ($categories[$category] ?? 0) + $count;
+            if ($this->isLogRowSafe($row)) $safe += $count; else $danger += $count;
+        }
+        return ['totalSafeWebsites' => $safe, 'totalDangerousWebsites' => $danger, 'categories' => $categories];
+    }
+
+    public function statisticYear(string $parentId, string $childId, int $year): array
+    {
+        $months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        $stats = [];
+        foreach ($months as $i => $name) $stats[$i + 1] = ['month' => $name, 'Good' => 0, 'Bad' => 0];
+        [$where, $params] = $this->logWhere($parentId, $childId, 'YEAR(created_at) = ?');
+        $params[] = $year;
+        $sql = "SELECT MONTH(created_at) AS period_key, grant_access, classified_url_json, COUNT(*) AS total FROM activity_logs {$where} GROUP BY MONTH(created_at), grant_access, classified_url_json";
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        foreach ($stmt->fetchAll() as $row) {
+            $m = (int)($row['period_key'] ?? 0);
+            if (!isset($stats[$m])) continue;
+            if ($this->isLogRowSafe($row)) $stats[$m]['Good'] += (int)$row['total']; else $stats[$m]['Bad'] += (int)$row['total'];
+        }
+        return array_values($stats);
+    }
+
+    public function statisticMonth(string $parentId, string $childId, string $date): array
+    {
+        $parts = explode('-', $date);
+        $year = (int)($parts[0] ?? date('Y')) ?: (int)date('Y');
+        $month = (int)($parts[1] ?? date('n')) ?: (int)date('n');
+        $days = cal_days_in_month(CAL_GREGORIAN, $month, $year);
+        $stats = [];
+        for ($d = 1; $d <= $days; $d++) $stats[$d] = ['month' => (string)$d, 'Good' => 0, 'Bad' => 0];
+        [$where, $params] = $this->logWhere($parentId, $childId, 'YEAR(created_at) = ? AND MONTH(created_at) = ?');
+        $params[] = $year;
+        $params[] = $month;
+        $sql = "SELECT DAY(created_at) AS period_key, grant_access, classified_url_json, COUNT(*) AS total FROM activity_logs {$where} GROUP BY DAY(created_at), grant_access, classified_url_json";
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        foreach ($stmt->fetchAll() as $row) {
+            $d = (int)($row['period_key'] ?? 0);
+            if (!isset($stats[$d])) continue;
+            if ($this->isLogRowSafe($row)) $stats[$d]['Good'] += (int)$row['total']; else $stats[$d]['Bad'] += (int)$row['total'];
+        }
+        return array_values($stats);
+    }
+
+    public function listLogs(string $parentId, string $childId, array $query): array
+    {
+        $page = max(1, (int)($query['page'] ?? 1));
+        $limit = max(1, min(100, (int)($query['limit'] ?? 10)));
+        [$where, $params] = $this->buildLogFilterWhere($parentId, $childId, $query);
+
+        $countStmt = $this->pdo->prepare("SELECT COUNT(*) FROM activity_logs l {$where}");
+        $countStmt->execute($params);
+        $total = (int)$countStmt->fetchColumn();
+
+        $sql = "SELECT l.*, c.name AS child_name FROM activity_logs l LEFT JOIN children c ON c.id = l.child_id {$where} ORDER BY l.created_at DESC LIMIT {$limit} OFFSET " . (($page - 1) * $limit);
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        $items = [];
+        foreach ($stmt->fetchAll() as $row) $items[] = $this->decorateLogRow($row);
+        return ['items' => $items, 'page' => $page, 'limit' => $limit, 'total' => $total, 'totalPage' => max(1, (int)ceil($total / $limit))];
+    }
+
+    public function clearLogs(string $parentId, string $childId, array $query): int
+    {
+        [$where, $params] = $this->buildLogFilterWhere($parentId, $childId, $query);
+        $select = $this->pdo->prepare("SELECT l.log_id FROM activity_logs l {$where}");
+        $select->execute($params);
+        $ids = array_map('strval', $select->fetchAll(PDO::FETCH_COLUMN));
+        if (!$ids) return 0;
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $this->pdo->prepare("DELETE FROM activity_logs WHERE log_id IN ({$placeholders})");
+        $stmt->execute($ids);
+        return $stmt->rowCount();
+    }
+
+    public function report(string $parentId, string $childId, array $query): array
+    {
+        // Jangan pakai listLogs() untuk total report.
+        // listLogs() sengaja dibatasi max 100 data untuk pagination UI,
+        // sedangkan report harus menghitung semua data sesuai filter.
+        [$where, $params] = $this->buildLogFilterWhere($parentId, $childId, $query);
+
+        $stmt = $this->pdo->prepare("
+            SELECT l.grant_access, l.classified_url_json, l.url
+            FROM activity_logs l
+            {$where}
+            ORDER BY l.created_at DESC
+        ");
+        $stmt->execute($params);
+
+        $total = 0;
+        $safe = 0;
+        $danger = 0;
+        $categories = [];
+        $hosts = [];
+
+        foreach ($stmt->fetchAll() as $row) {
+            $total++;
+
+            $isSafe = $this->isLogRowSafe($row);
+
+            if ($isSafe) {
+                $safe++;
+            } else {
+                $danger++;
+            }
+
+            $classification = $this->firstClassification($row['classified_url_json'] ?? null);
+            $cat = (string)($classification['category'] ?? ($isSafe ? 'Safe' : 'Risky'));
+            $categories[$cat] = ($categories[$cat] ?? 0) + 1;
+
+            $host = strtolower((string)(parse_url((string)($row['url'] ?? ''), PHP_URL_HOST) ?: ''));
+
+            if ($host !== '') {
+                $hosts[$host] = ($hosts[$host] ?? 0) + 1;
+            }
+        }
+
+        arsort($categories);
+        arsort($hosts);
+
+        // Recent logs tetap cukup 10 saja, karena ini hanya untuk list terbaru di report.
+        $recentQuery = $query;
+        $recentQuery['page'] = 1;
+        $recentQuery['limit'] = 10;
+
+        $recent = $this->listLogs($parentId, $childId, $recentQuery)['items'];
+
+        return [
+            'period' => (string)($query['period'] ?? 'daily'),
+            'total' => $total,
+            'safe' => $safe,
+            'danger' => $danger,
+            'safePercent' => $total ? round(($safe / $total) * 100) : 100,
+            'categories' => $categories,
+            'topHosts' => array_slice($hosts, 0, 8, true),
+            'recent' => $recent,
+        ];
+    }
+
+    private function buildLogFilterWhere(string $parentId, string $childId, array $query): array
+    {
+        [$where, $params] = $this->logWhere($parentId, $childId, '', 'l');
+        $clauses = [];
+
+        $period = (string)($query['period'] ?? 'all');
+        if ($period === 'daily') {
+            $year = (int)($query['year'] ?? date('Y'));
+            $month = (int)($query['month'] ?? date('n'));
+            $date = (int)($query['date'] ?? date('j'));
+            $clauses[] = 'YEAR(l.created_at) = ? AND MONTH(l.created_at) = ? AND DAY(l.created_at) = ?';
+            array_push($params, $year, $month, $date);
+        } elseif ($period === 'monthly') {
+            $year = (int)($query['year'] ?? date('Y'));
+            $month = (int)($query['month'] ?? date('n'));
+            $clauses[] = 'YEAR(l.created_at) = ? AND MONTH(l.created_at) = ?';
+            array_push($params, $year, $month);
+        } elseif ($period === 'range') {
+            $start = (string)($query['start'] ?? '');
+            $end = (string)($query['end'] ?? '');
+            if ($start !== '') { $clauses[] = 'l.created_at >= ?'; $params[] = date('Y-m-d 00:00:00', strtotime($start) ?: time()); }
+            if ($end !== '') { $clauses[] = 'l.created_at <= ?'; $params[] = date('Y-m-d 23:59:59', strtotime($end) ?: time()); }
+        }
+
+        $status = strtolower((string)($query['status'] ?? 'all'));
+        if (in_array($status, ['positive', 'safe', 'allowed'], true)) {
+            $clauses[] = 'l.grant_access = 1';
+        } elseif (in_array($status, ['negative', 'danger', 'blocked', 'bad'], true)) {
+            $clauses[] = '(l.grant_access = 0 OR l.grant_access IS NULL)';
+        } elseif (in_array($status, ['pending', 'warning'], true)) {
+            $clauses[] = 'l.grant_access IS NULL';
+        }
+
+        $category = trim((string)($query['category'] ?? ''));
+        if ($category !== '') {
+            $clauses[] = 'LOWER(l.classified_url_json) LIKE ?';
+            $params[] = '%' . strtolower($category) . '%';
+        }
+
+        $q = trim((string)($query['q'] ?? ''));
+        if ($q !== '') {
+            $clauses[] = '(l.url LIKE ? OR l.web_title LIKE ? OR l.web_description LIKE ?)';
+            $like = '%' . $q . '%';
+            array_push($params, $like, $like, $like);
+        }
+
+        if ($clauses) {
+            $where .= ' AND ' . implode(' AND ', $clauses);
+        }
+        return [$where, $params];
+    }
+
+    private function logWhere(string $parentId, string $childId, string $extra = '', string $alias = ''): array
+    {
+        $prefix = $alias !== '' ? $alias . '.' : '';
+        $where = "WHERE {$prefix}parent_id = ?";
+        $params = [$parentId];
+        if ($childId !== 'ALL' && $childId !== '') {
+            $where .= " AND {$prefix}child_id = ?";
+            $params[] = $childId;
+        }
+        if ($extra !== '') {
+            $where .= ' AND ' . $extra;
+        }
+        return [$where, $params];
+    }
+
+    private function mapLogRow(array $r): array
+    {
+        return [
+            'log_id' => (string)$r['log_id'],
+            'child_id' => (string)$r['child_id'],
+            'parentId' => (string)$r['parent_id'],
+            'url' => (string)$r['url'],
+            'web_title' => (string)$r['web_title'],
+            'web_description' => (string)$r['web_description'],
+            'detail_url' => (string)$r['detail_url'],
+            'grant_access' => $this->nullableBool($r['grant_access']),
+            'classified_url' => $this->jsonDecode($r['classified_url_json'] ?? null, []),
+            'source' => (string)$r['source'],
+            'createdAt' => $this->dt($r['created_at'] ?? null),
+            'updatedAt' => $this->dt($r['updated_at'] ?? null),
+        ];
+    }
+
+    private function decorateLogRow(array $row): array
+    {
+        $log = $this->mapLogRow($row);
+        $log['child'] = ['id' => $log['child_id'], 'name' => (string)($row['child_name'] ?? '-')];
+        $classification = $log['classified_url'][0] ?? [];
+        $log['risk_category'] = (string)($classification['category'] ?? ($this->isDecoratedLogSafe($log) ? 'Safe' : 'Risky'));
+        $log['risk_reason'] = (string)($classification['reason'] ?? '');
+        return $log;
+    }
+
+    private function firstClassification(mixed $json): array
+    {
+        $items = $this->jsonDecode($json, []);
+        return is_array($items) && isset($items[0]) && is_array($items[0]) ? $items[0] : [];
+    }
+
+    private function isLogRowSafe(array $row): bool
+    {
+        if ($row['grant_access'] !== null) return (int)$row['grant_access'] === 1;
+        $classification = $this->firstClassification($row['classified_url_json'] ?? null);
+        return (string)($classification['FINAL_label'] ?? 'aman') === 'aman';
+    }
+
+    private function isDecoratedLogSafe(array $log): bool
+    {
+        if (($log['grant_access'] ?? null) === true) return true;
+        if (($log['grant_access'] ?? null) === false) return false;
+        $classification = $log['classified_url'][0] ?? [];
+        return (string)($classification['FINAL_label'] ?? 'aman') === 'aman';
     }
 
     private function jsonDecode(mixed $value, mixed $fallback): mixed
