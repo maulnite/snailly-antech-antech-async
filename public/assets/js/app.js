@@ -1568,37 +1568,135 @@
 
   async function loadReport() {
     if (!requireUser()) return;
+
     const root = document.getElementById('reportContent');
     const dateInput = document.getElementById('reportDate');
-    if (dateInput && !dateInput.value) dateInput.value = new Date().toISOString().slice(0,10);
+
+    if (dateInput && !dateInput.value) {
+      dateInput.value = new Date().toISOString().slice(0, 10);
+    }
+
     try {
       if (!state.children?.length) await refreshChildren();
+
       const childSelect = document.getElementById('reportChildFilter');
+
       if (childSelect) {
         const current = childSelect.value || state.selectedChildId || 'ALL';
         childSelect.innerHTML = childOptionsHTML(current);
-        childSelect.value = [...childSelect.options].some((o) => o.value === current) ? current : 'ALL';
+        childSelect.value = [...childSelect.options].some((o) => o.value === current)
+          ? current
+          : 'ALL';
       }
+
+      const logLimitSelect = ensureReportLogLimitControl();
+
       const childId = childSelect?.value || 'ALL';
       const period = document.getElementById('reportPeriod')?.value || 'daily';
-      const date = dateInput?.value || new Date().toISOString().slice(0,10);
-      const d = new Date(date);
-      const params = { period, selectedDate: date, year: d.getFullYear(), month: d.getMonth()+1, date: d.getDate() };
+      const selectedDate = dateInput?.value || new Date().toISOString().slice(0, 10);
+      const d = new Date(selectedDate);
+
+      const logLimit = Number(
+        logLimitSelect?.value ||
+        localStorage.getItem('snailly_report_log_limit') ||
+        50
+      );
+
+      const params = {
+        period,
+        selectedDate,
+        year: d.getFullYear(),
+        month: d.getMonth() + 1,
+        date: d.getDate(),
+        logLimit,
+      };
+
       const response = await api(`/report/${childId}`, { auth: true, params });
       const report = normalizeResponse(response) || {};
+
       root.innerHTML = reportHTML(report);
-    } catch (error) { root.innerHTML = `<div class="panel empty-state">${escapeHTML(messageFromError(error))}</div>`; }
+    } catch (error) {
+      root.innerHTML = `<div class="panel empty-state">${escapeHTML(messageFromError(error))}</div>`;
+    }
   }
 
+  function ensureReportLogLimitControl() {
+    const savedValue = localStorage.getItem('snailly_report_log_limit') || '50';
+
+    const existing = document.getElementById('reportLogLimit');
+    if (existing) {
+      if (!existing.value) existing.value = savedValue;
+
+      if (!existing.dataset.bound) {
+        existing.addEventListener('change', () => {
+          localStorage.setItem('snailly_report_log_limit', existing.value || '50');
+          loadReport();
+        });
+        existing.dataset.bound = '1';
+      }
+
+      return existing;
+    }
+
+    const anchor =
+      document.getElementById('reportDate') ||
+      document.getElementById('printReportButton') ||
+      document.getElementById('reportPeriod');
+
+    if (!anchor) return null;
+
+    const select = document.createElement('select');
+    select.id = 'reportLogLimit';
+    select.className = 'report-log-limit-select';
+    select.title = 'Jumlah log yang ikut masuk print/PDF';
+
+    select.innerHTML = `
+      <option value="10">Top 10 Logs for PDF</option>
+      <option value="25">Top 25 Logs for PDF</option>
+      <option value="50">Top 50 Logs for PDF</option>
+      <option value="100">Top 100 Logs for PDF</option>
+      <option value="200">Top 200 Logs for PDF</option>
+      <option value="500">Top 500 Logs for PDF</option>
+    `;
+
+    select.value = [...select.options].some((option) => option.value === savedValue)
+      ? savedValue
+      : '50';
+
+    select.addEventListener('change', () => {
+      localStorage.setItem('snailly_report_log_limit', select.value || '50');
+      loadReport();
+    });
+
+    if (anchor.id === 'printReportButton') {
+      anchor.insertAdjacentElement('beforebegin', select);
+    } else {
+      anchor.insertAdjacentElement('afterend', select);
+    }
+
+    return select;
+  }
   function reportHTML(report) {
     const cats = report.categories || {};
     const hosts = report.topHosts || {};
     const riskyHosts = report.topRiskyHosts || {};
     const recent = report.recent || [];
+
+    const recentLimit = Number(
+      report.recentLimit ||
+      document.getElementById('reportLogLimit')?.value ||
+      localStorage.getItem('snailly_report_log_limit') ||
+      recent.length ||
+      10
+    );
+
     const reportDate = document.getElementById('reportDate')?.value || new Date().toISOString().slice(0, 10);
     const reportPeriod = document.getElementById('reportPeriod')?.value || 'daily';
     const childValue = document.getElementById('reportChildFilter')?.value || 'ALL';
-    const childLabel = childValue === 'ALL' ? 'All Children' : ((state.children || []).find((child) => child.id === childValue)?.name || 'Selected Child');
+    const childLabel = childValue === 'ALL'
+      ? 'All Children'
+      : ((state.children || []).find((child) => child.id === childValue)?.name || 'Selected Child');
+
     return `<div class="report-screen-only">
       <section class="card-grid report-cards">
         ${statCard('📌','Total Visit', report.total || 0, '', 'all')}
@@ -1606,45 +1704,76 @@
         ${statCard('⚠️','Risky / Blocked', report.danger || 0, 'negative', 'negative')}
         ${statCard('⭐','Safety Score', `${report.safePercent ?? 100}%`, 'positive', 'all')}
       </section>
+
       <section class="report-summary-grid report-print-area">
-        <div class="panel"><h2>Category Breakdown</h2>${Object.keys(cats).length ? `<div class="category-list">${Object.entries(cats).map(([k,v]) => `<div><span>${escapeHTML(k)}</span><strong>${v}</strong></div>`).join('')}</div>` : '<div class="empty-state">No category data.</div>'}</div>
-        <div class="panel"><h2>Most Visited Hosts</h2>${Object.keys(hosts).length ? `<div class="category-list">${Object.entries(hosts).map(([k,v]) => `<div><span>${escapeHTML(k)}</span><strong>${v}</strong></div>`).join('')}</div>` : '<div class="empty-state">No host data.</div>'}</div>
-        <div class="panel"><h2>Top Risky / Blocked Hosts</h2>${Object.keys(riskyHosts).length ? `<div class="category-list">${Object.entries(riskyHosts).map(([k,v]) => `<div><span>${escapeHTML(k)}</span><strong>${v}</strong></div>`).join('')}</div>` : '<div class="empty-state">No risky host data.</div>'}</div>
+        <div class="panel">
+          <h2>Category Breakdown</h2>
+          ${Object.keys(cats).length
+            ? `<div class="category-list">${Object.entries(cats).map(([k,v]) => `<div><span>${escapeHTML(k)}</span><strong>${v}</strong></div>`).join('')}</div>`
+            : '<div class="empty-state">No category data.</div>'}
+        </div>
+
+        <div class="panel">
+          <h2>Most Visited Hosts</h2>
+          ${Object.keys(hosts).length
+            ? `<div class="category-list">${Object.entries(hosts).map(([k,v]) => `<div><span>${escapeHTML(k)}</span><strong>${v}</strong></div>`).join('')}</div>`
+            : '<div class="empty-state">No host data.</div>'}
+        </div>
+
+        <div class="panel">
+          <h2>Top Risky / Blocked Hosts</h2>
+          ${Object.keys(riskyHosts).length
+            ? `<div class="category-list">${Object.entries(riskyHosts).map(([k,v]) => `<div><span>${escapeHTML(k)}</span><strong>${v}</strong></div>`).join('')}</div>`
+            : '<div class="empty-state">No risky host data.</div>'}
+        </div>
       </section>
-      <section class="panel report-log-section"><h2>Recent Logs in Report</h2>${logsTableHTML(recent)}</section>
+
+      <section class="panel report-log-section">
+        <h2>Top ${escapeHTML(recentLimit)} Recent Logs in Report</h2>
+        ${logsTableHTML(recent)}
+      </section>
     </div>
-    ${printReportHTML({ report, cats, hosts, riskyHosts, recent, reportDate, reportPeriod, childLabel })}`;
+    ${printReportHTML({ report, cats, hosts, riskyHosts, recent, recentLimit, reportDate, reportPeriod, childLabel })}`;
   }
 
-  function printReportHTML({ report, cats, hosts, riskyHosts = {}, recent, reportDate, reportPeriod, childLabel }) {
+  function printReportHTML({ report, cats, hosts, riskyHosts = {}, recent, recentLimit = 10, reportDate, reportPeriod, childLabel }) {
     return `<article class="print-report-document" aria-hidden="true">
       <header class="print-report-header">
         <div>
           <h1>Snailly Kids Activity Report</h1>
-          <p>Report period: ${escapeHTML(reportPeriod)} • Date: ${escapeHTML(reportDate)} • Child: ${escapeHTML(childLabel)}</p>
+          <p>Report period: ${escapeHTML(reportPeriod)} • Date: ${escapeHTML(reportDate)} • Child: ${escapeHTML(childLabel)} • Logs shown: Top ${escapeHTML(recentLimit)}</p>
         </div>
         <strong>Snailly Kids</strong>
       </header>
+
       <section class="print-summary-grid">
         <div><span>Total Visit</span><strong>${escapeHTML(report.total || 0)}</strong></div>
         <div><span>Safe</span><strong>${escapeHTML(report.safe || 0)}</strong></div>
         <div><span>Risky / Blocked</span><strong>${escapeHTML(report.danger || 0)}</strong></div>
         <div><span>Safety Score</span><strong>${escapeHTML(report.safePercent ?? 100)}%</strong></div>
       </section>
+
       <section class="print-two-cols">
         <div>
           <h2>Category Breakdown</h2>
-          ${Object.keys(cats).length ? `<table class="print-mini-table"><tbody>${Object.entries(cats).map(([k,v]) => `<tr><td>${escapeHTML(k)}</td><td>${escapeHTML(v)}</td></tr>`).join('')}</tbody></table>` : '<p>No category data.</p>'}
+          ${Object.keys(cats).length
+            ? `<table class="print-mini-table"><tbody>${Object.entries(cats).map(([k,v]) => `<tr><td>${escapeHTML(k)}</td><td>${escapeHTML(v)}</td></tr>`).join('')}</tbody></table>`
+            : '<p>No category data.</p>'}
         </div>
+
         <div>
           <h2>Most Visited Hosts</h2>
-          ${Object.keys(hosts).length ? `<table class="print-mini-table"><tbody>${Object.entries(hosts).map(([k,v]) => `<tr><td>${escapeHTML(k)}</td><td>${escapeHTML(v)}</td></tr>`).join('')}</tbody></table>` : '<p>No host data.</p>'}
+          ${Object.keys(hosts).length
+            ? `<table class="print-mini-table"><tbody>${Object.entries(hosts).map(([k,v]) => `<tr><td>${escapeHTML(k)}</td><td>${escapeHTML(v)}</td></tr>`).join('')}</tbody></table>`
+            : '<p>No host data.</p>'}
         </div>
       </section>
+
       <section>
-        <h2>Log Activity</h2>
+        <h2>Log Activity - Top ${escapeHTML(recentLimit)} Recent Logs</h2>
         ${printLogsTableHTML(recent)}
       </section>
+
       <footer class="print-footer">Generated locally from Snailly Kids dashboard.</footer>
     </article>`;
   }

@@ -519,7 +519,7 @@ final class SnaillyDatabase
     public function listLogs(string $parentId, string $childId, array $query): array
     {
         $page = max(1, (int)($query['page'] ?? 1));
-        $limit = max(1, min(100, (int)($query['limit'] ?? 10)));
+        $limit = max(1, min(500, (int)($query['limit'] ?? 10)));
         [$where, $params] = $this->buildLogFilterWhere($parentId, $childId, $query);
 
         $countStmt = $this->pdo->prepare("SELECT COUNT(*) FROM activity_logs l {$where}");
@@ -584,9 +584,12 @@ final class SnaillyDatabase
         arsort($hosts);
         arsort($riskyHosts);
 
+        $recentLimit = max(1, min(500, (int)($query['logLimit'] ?? $query['recentLimit'] ?? 50)));
+
         $recentQuery = $query;
         $recentQuery['page'] = 1;
-        $recentQuery['limit'] = 10;
+        $recentQuery['limit'] = $recentLimit;
+
         $recent = $this->listLogs($parentId, $childId, $recentQuery)['items'];
 
         return [

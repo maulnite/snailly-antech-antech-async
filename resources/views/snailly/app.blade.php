@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ $config['appName'] }}</title>
-    <link rel="stylesheet" href="{{ asset('assets/css/style.css') }}">
+    <link rel="stylesheet" href="{{ asset('assets/css/style.css') }}?v=dropdown-fix-1">
     <script>
         window.SNAILLY_CONFIG = @json($config);
         window.SNAILLY_INITIAL_PAGE = @json($page);
@@ -243,18 +243,34 @@
                         <h1>Daily / Weekly Report</h1>
                         <p class="muted">Ringkasan aktivitas anak untuk bahan evaluasi orang tua.</p>
                     </div>
-                    <div class="toolbar">
-                        <select id="reportChildFilter" class="input-compact"><option value="ALL">All Children</option></select>
+
+                    <div class="toolbar report-toolbar">
+                        <select id="reportChildFilter" class="input-compact">
+                            <option value="ALL">All Children</option>
+                        </select>
+
                         <select id="reportPeriod" class="input-compact">
                             <option value="daily">Daily</option>
                             <option value="weekly">Weekly</option>
                             <option value="monthly">Monthly</option>
                             <option value="all">All</option>
                         </select>
+
                         <input id="reportDate" class="input-compact" type="date">
+
+                        <select id="reportLogLimit" class="input-compact report-log-limit-select" title="Jumlah log yang ikut masuk print/PDF">
+                            <option value="10">Top 10 Logs</option>
+                            <option value="25">Top 25 Logs</option>
+                            <option value="50" selected>Top 50 Logs</option>
+                            <option value="100">Top 100 Logs</option>
+                            <option value="200">Top 200 Logs</option>
+                            <option value="500">Top 500 Logs</option>
+                        </select>
+
                         <button id="printReportButton" class="btn secondary" type="button">Print / Save PDF</button>
                     </div>
                 </div>
+
                 <div id="reportContent"></div>
             </div>
         </section>
@@ -352,6 +368,6 @@
         </form>
     </dialog>
 
-    <script src="{{ asset('assets/js/app.js') }}"></script>
+    <script src="{{ asset('assets/js/app.js') }}?v=report-log-limit-1"></script>
 </body>
 </html>
