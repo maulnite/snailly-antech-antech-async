@@ -1,11 +1,15 @@
 *.log
 .DS_Store
+Thumbs.db
+
+# Environment
 .env
-.env.example
-.env.backup
-.env.production
+.env.*
+!.env.example
+!.env.docker.example
+
+# IDE / Editor
 .phpactor.json
-.phpunit.result.cache
 /.codex
 /.cursor/
 /.idea
@@ -13,16 +17,54 @@
 /.phpunit.cache
 /.vscode
 /.zed
+
+# Auth / Secrets
 /auth.json
-/node_modules
-/public/build
-/public/fonts-manifest.dev.json
-/public/hot
-/public/storage
-/storage/*.key
-/storage/pail
+ngrok.yml
+.ngrok2/
+*.pem
+*.key
+
+# PHP / Laravel
 /vendor
 _ide_helper.php
+.phpunit.result.cache
+/storage/*.key
+/storage/pail
+
+# Laravel storage runtime
+/storage/app/*
+!/storage/app/.gitignore
+/storage/framework/cache/*
+!/storage/framework/cache/.gitignore
+/storage/framework/sessions/*
+!/storage/framework/sessions/.gitignore
+/storage/framework/testing/*
+!/storage/framework/testing/.gitignore
+/storage/framework/views/*
+!/storage/framework/views/.gitignore
+/storage/logs/*
+!/storage/logs/.gitignore
+
+# Node / Vite
+/node_modules
+/public/build
+/public/hot
+/public/storage
+/public/fonts-manifest.dev.json
+
+# Docker / local runtime
+mysql_data/
+docker-data/
+docker-volumes/
+*.sql.gz
+*.dump
+
+# Extension packaging
+snailly-extension.zip
+extension.zip
+*.crx
+
+# Homestead
 Homestead.json
 Homestead.yaml
-Thumbs.db

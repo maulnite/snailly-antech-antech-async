@@ -1,0 +1,49 @@
+services:
+  app:
+    build: .
+    container_name: snailly_app
+    ports:
+      - "8080:80"
+    env_file:
+      - .env.docker
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./storage:/var/www/html/storage
+      - ./data:/var/www/html/data
+
+  db:
+    image: mysql:8.0
+    container_name: snailly_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: snailly
+    ports:
+      - "3307:3306"
+    volumes:
+      - snailly_mysql_data:/var/lib/mysql
+      - ./database/snailly_schema.sql:/docker-entrypoint-initdb.d/01_snailly_schema.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: snailly_phpmyadmin
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    environment:
+      PMA_HOST: db
+      PMA_PORT: 3306
+      MYSQL_ROOT_PASSWORD: root
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  snailly_mysql_data:
