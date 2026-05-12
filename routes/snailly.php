@@ -25,10 +25,12 @@ Route::get('/snailly/blocked', SnaillyPageController::class)->name('snailly.bloc
 
 $snaillyProxyRoute = Route::match(['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], '/api/snailly/proxy', [SnaillyApiController::class, 'proxy']);
 $snaillyTrackRoute = Route::match(['POST', 'OPTIONS'], '/api/snailly/track', [SnaillyApiController::class, 'track']);
+$legacyTrackRoute = Route::match(['POST', 'OPTIONS'], '/api/track.php', [SnaillyApiController::class, 'track']);
 $snaillyBlocklistRoute = Route::match(['GET', 'POST', 'OPTIONS'], '/api/snailly/blocklist', [SnaillyApiController::class, 'blocklist']);
 
 if ($snaillyCsrfMiddleware !== []) {
     $snaillyProxyRoute->withoutMiddleware($snaillyCsrfMiddleware);
     $snaillyTrackRoute->withoutMiddleware($snaillyCsrfMiddleware);
+    $legacyTrackRoute->withoutMiddleware($snaillyCsrfMiddleware);
     $snaillyBlocklistRoute->withoutMiddleware($snaillyCsrfMiddleware);
 }
